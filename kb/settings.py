@@ -92,6 +92,21 @@ class Settings(BaseSettings):
     ingestion_enrich_limit: int = 500
     ingestion_enrich_strategy: Literal["sample_first", "all", "off"] = "sample_first"
 
+    # -------------------- Generation (Phase 3) -------------------- #
+    # Tokens reserved for the CONTEXT block in the user prompt. Leaves
+    # room for system + question + answer in a 128k-class window.
+    generation_context_budget_tokens: int = 6000
+    generation_max_answer_tokens: int = 1024
+    generation_temperature: float = 0.1
+    # Refuse to invoke the LLM when the top retrieved hit's aggregate
+    # score is below this floor. 0.0 disables the gate; Phase 3 · Slice 2
+    # tunes this against the eval set.
+    generation_min_score_threshold: float = 0.0
+    # Whether to include each chunk's summary alongside its parent
+    # content in the context block. Costs ~1 line per hit; pays for
+    # itself by improving the cross-encoder framing for short answers.
+    generation_include_summaries_in_context: bool = True
+
     # Chunking
     parent_chunk_target_tokens: int = 1800
     child_chunk_target_tokens: int = 320

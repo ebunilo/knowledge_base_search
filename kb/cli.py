@@ -9,6 +9,7 @@ Usage:
     kb inspect --source src_sample_public --doc-index 0 --show-children
     kb search --query "how does the API gateway authenticate?"
     kb search --query "..." --as-user u_001
+    kb ask --query "..." --as-user u_001 --stream
     kb health
 """
 
@@ -409,6 +410,213 @@ def search(
 
 def _fmt(x: float | None) -> str:
     return "-" if x is None else f"{x:.3f}"
+
+
+# --------------------------------------------------------------------------- #
+# ask — Phase 3 generation
+# --------------------------------------------------------------------------- #
+
+@cli.command("ask")
+@click.option("--query", "-q", required=True, help="Natural-language question.")
+@click.option(
+    "--as-user",
+    "as_user",
+    default="anonymous",
+    show_default=True,
+    help="user_id / email from staff_directory.json, or 'anonymous'.",
+)
+@click.option("--role", default=None, help="Override role.")
+@click.option("--dept", default=None, help="Override department.")
+@click.option("--top-k", type=int, default=8, show_default=True,
+              help="Number of context blocks to feed the LLM.")
+@click.option(
+    "--rerank/--no-rerank",
+    default=True, show_default=True,
+    help="Cross-encoder rerank the retrieved candidates.",
+)
+@click.option(
+    "--rewrite",
+    type=click.Choice(["off", "multi_query", "hyde", "both"]),
+    default="off", show_default=True,
+    help="Query rewriting strategy.",
+)
+@click.option(
+    "--multi-query-k", type=int, default=2, show_default=True,
+    help="Number of paraphrases when --rewrite includes multi_query.",
+)
+@click.option(
+    "--context-budget", type=int, default=None,
+    help="Max tokens for the CONTEXT block (default: settings).",
+)
+@click.option(
+    "--max-tokens", type=int, default=None,
+    help="Max tokens for the LLM answer (default: settings).",
+)
+@click.option(
+    "--temperature", type=float, default=None,
+    help="LLM sampling temperature (default: settings).",
+)
+@click.option(
+    "--stream/--no-stream",
+    default=True, show_default=True,
+    help="Stream tokens to the terminal as they arrive.",
+)
+@click.option(
+    "--json", "as_json", is_flag=True,
+    help="Emit the full GenerationResult as JSON (implies --no-stream).",
+)
+def ask(
+    query: str,
+    as_user: str,
+    role: str | None,
+    dept: str | None,
+    top_k: int,
+    rerank: bool,
+    rewrite: str,
+    multi_query_k: int,
+    context_budget: int | None,
+    max_tokens: int | None,
+    temperature: float | None,
+    stream: bool,
+    as_json: bool,
+) -> None:
+    """Ask the knowledge base. Retrieves, generates, and streams a cited answer."""
+    from kb.generation import Generator, GenerationConfig
+    from kb.retrieval import RetrievalConfig, UserContext
+    from kb.retrieval.acl import load_user
+    from kb.settings import get_settings
+
+    try:
+        user = load_user(as_user)
+    except (FileNotFoundError, KeyError):
+        user = UserContext(user_id=as_user or "anonymous")
+    if role is not None:
+        user = user.model_copy(update={"role": role})
+    if dept is not None:
+        user = user.model_copy(update={"department": dept})
+
+    settings = get_settings()
+    rcfg = RetrievalConfig(
+        top_k_final=top_k,
+        rerank=rerank,
+        rewrite_strategy=rewrite,  # type: ignore[arg-type]
+        multi_query_k=multi_query_k,
+    )
+    gcfg = GenerationConfig(
+        context_budget_tokens=(
+            context_budget
+            if context_budget is not None
+            else settings.generation_context_budget_tokens
+        ),
+        max_answer_tokens=(
+            max_tokens
+            if max_tokens is not None
+            else settings.generation_max_answer_tokens
+        ),
+        temperature=(
+            temperature
+            if temperature is not None
+            else settings.generation_temperature
+        ),
+        stream=stream and not as_json,
+        include_summaries_in_context=settings.generation_include_summaries_in_context,
+        min_score_threshold=settings.generation_min_score_threshold,
+    )
+
+    gen = Generator(settings=settings)
+
+    if as_json or not stream:
+        result = gen.ask(
+            query=query, user=user,
+            retrieval_config=rcfg, generation_config=gcfg,
+        )
+        if as_json:
+            click.echo(result.model_dump_json(indent=2))
+            if result.refused:
+                sys.exit(2)
+            return
+        _render_ask_header(result, user)
+        click.echo(result.answer)
+        click.echo("")
+        _render_ask_footer(result)
+        if result.refused:
+            sys.exit(2)
+        return
+
+    final_result = None
+    started = False
+    for ev in gen.ask_stream(
+        query=query, user=user,
+        retrieval_config=rcfg, generation_config=gcfg,
+    ):
+        if ev.kind == "start":
+            assert ev.result is not None
+            _render_ask_header(ev.result, user)
+            started = True
+        elif ev.kind == "token":
+            click.echo(ev.text, nl=False)
+        elif ev.kind == "refused":
+            if not started and ev.result is not None:
+                _render_ask_header(ev.result, user)
+            click.echo(ev.text)
+            final_result = ev.result
+        elif ev.kind == "done":
+            final_result = ev.result
+            click.echo("")
+
+    click.echo("")
+    if final_result is not None:
+        _render_ask_footer(final_result)
+        if final_result.refused:
+            sys.exit(2)
+
+
+def _render_ask_header(result, user) -> None:
+    click.echo("")
+    click.echo(f"query: {result.query!r}")
+    click.echo(
+        f"user:  {user.user_id} (tenant={user.tenant_id or '∅'} "
+        f"dept={user.department or '∅'} role={user.role})"
+    )
+    if result.retrieval is not None:
+        r = result.retrieval
+        click.echo(
+            f"retrieval: collections={','.join(r.collections_searched)} "
+            f"hits={len(r.hits)} fused={r.fused_candidates} "
+            f"rerank={'on' if r.rerank_applied else 'off'}"
+        )
+    click.echo(
+        f"generation: lane={result.lane or '-'} "
+        f"context_tokens={result.context_tokens} "
+        f"used_hits={result.used_hit_count}"
+    )
+    click.echo("─" * 60)
+
+
+def _render_ask_footer(result) -> None:
+    click.echo("─" * 60)
+    if result.refused:
+        click.echo(f"REFUSED: {result.refusal_reason}")
+    if result.citations:
+        click.echo("citations:")
+        for c in result.citations:
+            click.echo(
+                f"  [{c.marker}] {c.title or '(no title)'}  "
+                f"({c.source_id} · {c.section_path or '/'})"
+            )
+            click.echo(f"      {c.source_uri}")
+    if result.invalid_markers:
+        click.echo(
+            f"WARNING: {len(result.invalid_markers)} invalid citation marker(s): "
+            f"{result.invalid_markers}"
+        )
+    if result.uncited_hits:
+        click.echo(f"uncited context blocks: {result.uncited_hits}")
+    click.echo(
+        f"timing_ms: generation={result.generation_ms} total={result.total_ms} "
+        f"answer_chars={result.answer_chars} "
+        f"provider={result.provider or '-'} model={result.model or '-'}"
+    )
 
 
 # --------------------------------------------------------------------------- #

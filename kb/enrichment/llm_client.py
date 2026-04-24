@@ -25,8 +25,8 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Iterator
 
 from kb.settings import Profile, Settings, get_settings
 from kb.types import SensitivityLane
@@ -45,6 +45,35 @@ class CompletionResult:
     provider: str
     model: str
     latency_ms: int
+
+
+@dataclass
+class StreamingCompletion:
+    """
+    Returned by `LLMClient.stream()`. Iterating yields incremental text
+    chunks; `text`, `latency_ms`, `finish_reason` are populated after
+    iteration completes.
+
+    Provider-fallback semantics: streaming retries the next provider only
+    if the *current* one fails BEFORE yielding any tokens. Once the first
+    chunk has been delivered to the caller, exceptions propagate.
+    """
+    provider: str = ""
+    model: str = ""
+    text: str = ""
+    latency_ms: int = 0
+    finish_reason: str = ""
+    _chunks: Iterator[str] | None = field(default=None, repr=False)
+    _started_at: float = field(default=0.0, repr=False)
+
+    def __iter__(self) -> Iterator[str]:
+        if self._chunks is None:
+            return iter(())
+        self._started_at = time.monotonic()
+        for chunk in self._chunks:
+            self.text += chunk
+            yield chunk
+        self.latency_ms = int((time.monotonic() - self._started_at) * 1000)
 
 
 class LLMClient:
@@ -96,6 +125,84 @@ class LLMClient:
 
         raise LLMClientError(
             f"All providers failed for lane={lane.value}. Attempts: {errors}"
+        )
+
+    def stream(
+        self,
+        *,
+        prompt: str,
+        lane: SensitivityLane,
+        system: str | None = None,
+        max_tokens: int = 1024,
+        temperature: float = 0.1,
+    ) -> StreamingCompletion:
+        """
+        Stream a completion. Returns a `StreamingCompletion`; iterate it
+        to receive text chunks. After iteration completes, the object's
+        `text`, `latency_ms`, and `finish_reason` are populated.
+
+        Streaming is supported only for OpenAI-compatible providers
+        (`openai`, `qwen`). For HF dedicated endpoints we fall back to a
+        non-streaming completion and yield the full text in one chunk —
+        callers that care about UX latency should keep self-hosted lanes
+        on a streaming-capable provider in production.
+        """
+        providers = self._providers_for(lane)
+        errors: list[str] = []
+
+        for provider, model in providers:
+            try:
+                if provider in {"openai", "qwen"}:
+                    client = (
+                        self._get_openai_client() if provider == "openai"
+                        else self._get_qwen_client()
+                    )
+                    chunks = self._stream_openai_compat(
+                        client=client, model=model, prompt=prompt,
+                        system=system, max_tokens=max_tokens,
+                        temperature=temperature,
+                    )
+                else:
+                    # HF endpoint — synthesize a one-chunk stream.
+                    text = self._call_hf_endpoint(
+                        model=model, prompt=prompt, system=system,
+                        max_tokens=max_tokens, temperature=temperature,
+                    )
+                    chunks = iter([text])
+
+                # First-chunk peek: if the underlying call fails immediately
+                # (e.g. 401, model-not-found) we want to fall back to the
+                # next provider. Once any token has been delivered, errors
+                # propagate to the caller.
+                first_chunk: str | None = None
+                try:
+                    first_chunk = next(chunks)
+                except StopIteration:
+                    first_chunk = ""
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(f"{provider}:{model} failed before tokens: {exc}")
+                    logger.warning(
+                        "stream init failed, trying next provider: %s:%s — %s",
+                        provider, model, exc,
+                    )
+                    continue
+
+                def _gen(first: str = first_chunk, rest: Iterator[str] = chunks):
+                    if first:
+                        yield first
+                    yield from rest
+
+                return StreamingCompletion(
+                    provider=provider, model=model, _chunks=_gen(),
+                )
+            except Exception as exc:  # noqa: BLE001
+                msg = f"{provider}:{model} failed: {exc}"
+                logger.warning(msg)
+                errors.append(msg)
+                continue
+
+        raise LLMClientError(
+            f"All providers failed for lane={lane.value} (stream). Attempts: {errors}"
         )
 
     # ------------------------------------------------------------------ #
@@ -211,6 +318,44 @@ class LLMClient:
 
         resp = client.chat.completions.create(**kwargs)
         return (resp.choices[0].message.content or "").strip()
+
+    @staticmethod
+    def _stream_openai_compat(
+        *,
+        client: Any,
+        model: str,
+        prompt: str,
+        system: str | None,
+        max_tokens: int,
+        temperature: float,
+    ) -> Iterator[str]:
+        """
+        Wrap OpenAI's streaming chat-completion API as a plain str iterator.
+
+        The OpenAI Python SDK yields ChatCompletionChunk objects; we extract
+        `delta.content` and skip empty chunks. This works unchanged against
+        Qwen's OpenAI-compatible DashScope endpoint.
+        """
+        messages: list[dict[str, str]] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+
+        stream = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            stream=True,
+        )
+        for event in stream:
+            choices = getattr(event, "choices", None)
+            if not choices:
+                continue
+            delta = getattr(choices[0], "delta", None)
+            content = getattr(delta, "content", None) if delta else None
+            if content:
+                yield content
 
     # ---------------- Provider: HF dedicated endpoint ---------------- #
 
