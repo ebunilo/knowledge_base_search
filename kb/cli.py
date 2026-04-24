@@ -251,6 +251,33 @@ def inspect(
     help="RRF weight for sparse retriever.",
 )
 @click.option(
+    "--rerank/--no-rerank",
+    default=True,
+    show_default=True,
+    help="Cross-encoder rerank the fused candidates (bge-reranker-v2-m3).",
+)
+@click.option(
+    "--rerank-top-n",
+    type=int,
+    default=30,
+    show_default=True,
+    help="How many fused candidates to send to the reranker.",
+)
+@click.option(
+    "--rewrite",
+    type=click.Choice(["off", "multi_query", "hyde", "both"]),
+    default="off",
+    show_default=True,
+    help="Query rewriting strategy (LLM-backed).",
+)
+@click.option(
+    "--multi-query-k",
+    type=int,
+    default=2,
+    show_default=True,
+    help="Number of paraphrases when --rewrite includes multi_query.",
+)
+@click.option(
     "--no-parent",
     is_flag=True,
     help="Skip parent content in output (faster, fewer DB reads).",
@@ -271,12 +298,14 @@ def search(
     top_k_sparse: int,
     dense_weight: float,
     sparse_weight: float,
+    rerank: bool,
+    rerank_top_n: int,
+    rewrite: str,
+    multi_query_k: int,
     no_parent: bool,
     as_json: bool,
 ) -> None:
     """Run a hybrid (dense + BM25) search against the indexed corpus."""
-    import json as _json
-
     from kb.retrieval import Retriever, RetrievalConfig, UserContext
     from kb.retrieval.acl import load_user
 
@@ -296,6 +325,10 @@ def search(
         top_k_final=top_k,
         rrf_dense_weight=dense_weight,
         rrf_sparse_weight=sparse_weight,
+        rerank=rerank,
+        rerank_top_n=rerank_top_n,
+        rewrite_strategy=rewrite,  # type: ignore[arg-type]
+        multi_query_k=multi_query_k,
         include_parent_content=not no_parent,
     )
 
@@ -313,14 +346,31 @@ def search(
     )
     click.echo(f"collections: {', '.join(result.collections_searched)}")
     click.echo(
-        f"candidates: dense={result.dense_candidates} "
+        f"rewrite:     {result.rewrite_strategy}"
+        + (f"  variants={len(result.query_variants)}"
+           if result.rewrite_strategy != "off" else "")
+        + (f"  hyde={'yes' if result.hyde_passage else 'no'}"
+           if result.rewrite_strategy in {"hyde", "both"} else "")
+        + (f"  FALLBACK({result.rewrite_fallback})"
+           if result.rewrite_fallback else "")
+    )
+    click.echo(
+        f"rerank:      {'on' if result.rerank_applied else 'off'}"
+        + (f"  reranked={result.reranked_candidates}"
+           if result.rerank_applied else "")
+        + (f"  FALLBACK({result.rerank_fallback})"
+           if result.rerank_fallback else "")
+    )
+    click.echo(
+        f"candidates:  dense={result.dense_candidates} "
         f"sparse={result.sparse_candidates} "
         f"fused={result.fused_candidates} "
         f"final={result.final_hits}"
     )
     click.echo(
-        f"timing_ms: embed={result.embed_ms} dense={result.dense_ms} "
-        f"sparse={result.sparse_ms} fuse={result.fusion_ms} "
+        f"timing_ms:   rewrite={result.rewrite_ms} embed={result.embed_ms} "
+        f"dense={result.dense_ms} sparse={result.sparse_ms} "
+        f"fuse={result.fusion_ms} rerank={result.rerank_ms} "
         f"parents={result.parent_ms} total={result.total_ms}"
     )
     click.echo("─" * 60)
@@ -331,7 +381,10 @@ def search(
 
     for i, h in enumerate(result.hits, start=1):
         click.echo(
-            f"[{i}] score={h.score:.4f}  d={h.dense_rank}/{_fmt(h.dense_score)} "
+            f"[{i}] score={h.score:.4f} "
+            f"rr={_fmt(h.rerank_score)}/{h.rerank_rank or '-'} "
+            f"rrf={_fmt(h.rrf_score)} "
+            f"d={h.dense_rank}/{_fmt(h.dense_score)} "
             f"s={h.sparse_rank}/{_fmt(h.sparse_score)}  vis={h.visibility}"
         )
         click.echo(f"    title:     {h.title or '(no title)'}")
