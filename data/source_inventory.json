@@ -1,0 +1,182 @@
+[
+  {
+    "source_id": "src_internal_docs",
+    "source_name": "Internal Documentation Repository",
+    "connector_type": "confluence",
+    "connector_config": {
+      "base_url": "https://confluence.acme.internal",
+      "spaces": ["ENG", "OPS", "HR", "FIN"],
+      "auth_type": "service_account_pat"
+    },
+    "document_count": 3500,
+    "size_mb": 1200,
+    "primary_formats": ["html", "pdf", "markdown"],
+    "language": "en",
+    "region": "eu-west-1",
+    "sensitivity_lane": "self_hosted_only",
+    "default_visibility": "internal",
+    "default_acl": {
+      "departments": ["engineering", "operations", "people", "finance", "legal"],
+      "min_role": "employee"
+    },
+    "owner_contact": "documentation-stewards@acme.internal",
+    "refresh_cadence": "hourly_incremental",
+    "pii_likelihood": "medium",
+    "description": "Internal policies, runbooks, architecture docs, HR guidelines, finance procedures."
+  },
+  {
+    "source_id": "src_public_kb",
+    "source_name": "Public Knowledge Base",
+    "connector_type": "zendesk_guide",
+    "connector_config": {
+      "base_url": "https://help.acme.com",
+      "brand_id": "default",
+      "auth_type": "oauth_app"
+    },
+    "document_count": 1500,
+    "size_mb": 500,
+    "primary_formats": ["html", "markdown"],
+    "language": "en",
+    "region": "global_cdn",
+    "sensitivity_lane": "hosted_ok",
+    "default_visibility": "public",
+    "default_acl": {
+      "departments": ["*"],
+      "min_role": "anonymous"
+    },
+    "owner_contact": "kb-editors@acme.com",
+    "refresh_cadence": "every_15_min",
+    "pii_likelihood": "low",
+    "description": "Customer-facing FAQs, product manuals, help articles. Cleared for hosted LLM use."
+  },
+  {
+    "source_id": "src_github_public",
+    "source_name": "GitHub Repos (Public Code & Docs)",
+    "connector_type": "github",
+    "connector_config": {
+      "org": "acme-oss",
+      "include_paths": ["docs/**", "README.md", "**/*.md"],
+      "exclude_paths": ["node_modules/**", ".github/**"],
+      "auth_type": "github_app"
+    },
+    "document_count": 8000,
+    "size_mb": 3000,
+    "primary_formats": ["markdown", "yaml", "json", "code"],
+    "language": "en",
+    "region": "global",
+    "sensitivity_lane": "hosted_ok",
+    "default_visibility": "public",
+    "default_acl": {
+      "departments": ["*"],
+      "min_role": "anonymous"
+    },
+    "owner_contact": "devrel@acme.com",
+    "refresh_cadence": "webhook_on_push",
+    "pii_likelihood": "low",
+    "description": "Public OSS repo docs, developer guides, OpenAPI specs, sample configs."
+  },
+  {
+    "source_id": "src_github_private",
+    "source_name": "GitHub Repos (Private Engineering)",
+    "connector_type": "github",
+    "connector_config": {
+      "org": "acme-eng",
+      "include_paths": ["docs/**", "ARCHITECTURE.md", "RUNBOOK.md", "**/*.md"],
+      "exclude_paths": [".github/**", "vendor/**"],
+      "auth_type": "github_app"
+    },
+    "document_count": 4200,
+    "size_mb": 1800,
+    "primary_formats": ["markdown", "yaml", "json"],
+    "language": "en",
+    "region": "eu-west-1",
+    "sensitivity_lane": "self_hosted_only",
+    "default_visibility": "internal",
+    "default_acl": {
+      "departments": ["engineering"],
+      "min_role": "employee"
+    },
+    "owner_contact": "platform-eng@acme.internal",
+    "refresh_cadence": "webhook_on_push",
+    "pii_likelihood": "low",
+    "description": "Private engineering runbooks, architecture, infrastructure-as-code, internal API specs."
+  },
+  {
+    "source_id": "src_support_tickets",
+    "source_name": "Customer Support Tickets",
+    "connector_type": "zendesk_support",
+    "connector_config": {
+      "base_url": "https://acme.zendesk.com",
+      "include_states": ["solved", "closed"],
+      "include_fields": ["subject", "description", "comments_public"],
+      "auth_type": "oauth_app"
+    },
+    "document_count": 10000,
+    "size_mb": 1500,
+    "primary_formats": ["text", "html"],
+    "language": "en",
+    "region": "eu-west-1",
+    "sensitivity_lane": "self_hosted_only",
+    "default_visibility": "restricted",
+    "default_acl": {
+      "departments": ["customer_success", "engineering"],
+      "min_role": "employee"
+    },
+    "owner_contact": "cx-ops@acme.internal",
+    "refresh_cadence": "hourly_incremental",
+    "pii_likelihood": "high",
+    "pii_handling": "presidio_redact_then_index",
+    "description": "Resolved tickets with troubleshooting context. PII-heavy; redacted at ingestion."
+  },
+  {
+    "source_id": "src_legal_contracts",
+    "source_name": "Legal & Compliance Vault",
+    "connector_type": "s3",
+    "connector_config": {
+      "bucket": "acme-legal-vault-eu",
+      "prefix": "contracts/",
+      "kms_key_id": "alias/legal-vault",
+      "auth_type": "iam_role"
+    },
+    "document_count": 850,
+    "size_mb": 420,
+    "primary_formats": ["pdf"],
+    "language": "en",
+    "region": "eu-west-1",
+    "sensitivity_lane": "self_hosted_only",
+    "default_visibility": "restricted",
+    "default_acl": {
+      "departments": ["legal"],
+      "min_role": "manager"
+    },
+    "owner_contact": "general-counsel@acme.internal",
+    "refresh_cadence": "daily_incremental",
+    "pii_likelihood": "high",
+    "pii_handling": "presidio_tag_no_redact",
+    "description": "Executed contracts, NDAs, vendor agreements, policy documents. Restricted to Legal."
+  },
+  {
+    "source_id": "src_product_specs",
+    "source_name": "Product Specs & PRDs",
+    "connector_type": "google_drive",
+    "connector_config": {
+      "shared_drive_id": "0ABC...XYZ",
+      "auth_type": "service_account_dwd"
+    },
+    "document_count": 1200,
+    "size_mb": 600,
+    "primary_formats": ["pdf", "google_docs"],
+    "language": "en",
+    "region": "eu-west-1",
+    "sensitivity_lane": "self_hosted_only",
+    "default_visibility": "internal",
+    "default_acl": {
+      "departments": ["product", "engineering", "design"],
+      "min_role": "employee"
+    },
+    "owner_contact": "product-ops@acme.internal",
+    "refresh_cadence": "every_30_min",
+    "pii_likelihood": "low",
+    "description": "Product requirements, design specs, RFCs."
+  }
+]

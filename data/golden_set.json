@@ -1,0 +1,371 @@
+{
+  "schema_version": "1.0",
+  "description": "Seed evaluation set for the Acme RAG knowledge base. Each example is the contract used by the Ragas pipeline. Replace placeholder doc_ids with real IDs after first ingestion run.",
+  "intent_distribution": { "factoid": 8, "conversational": 8, "how_to": 8 },
+  "examples": [
+    {
+      "qid": "f001",
+      "intent": "factoid",
+      "query": "What is our default support SLA response time for Tier-1 customers?",
+      "expected_answer_summary": "Tier-1 customers have a 1-hour first-response SLA, 24/7.",
+      "expected_source_ids": ["src_internal_docs", "src_public_kb"],
+      "expected_acl": { "min_role": "employee", "departments": ["customer_success", "engineering"] },
+      "must_cite": true,
+      "sensitivity_lane": "hosted_ok",
+      "language": "en"
+    },
+    {
+      "qid": "f002",
+      "intent": "factoid",
+      "query": "What is the maximum supported request payload size for the public REST API?",
+      "expected_answer_summary": "The public REST API accepts payloads up to 10 MB.",
+      "expected_source_ids": ["src_github_public", "src_public_kb"],
+      "expected_acl": { "min_role": "anonymous" },
+      "must_cite": true,
+      "sensitivity_lane": "hosted_ok",
+      "language": "en"
+    },
+    {
+      "qid": "f003",
+      "intent": "factoid",
+      "query": "Which encryption standard is required for data at rest in the EU region?",
+      "expected_answer_summary": "AES-256 with KMS-managed keys is required for EU data at rest.",
+      "expected_source_ids": ["src_internal_docs", "src_legal_contracts"],
+      "expected_acl": { "min_role": "employee" },
+      "must_cite": true,
+      "sensitivity_lane": "self_hosted_only",
+      "language": "en"
+    },
+    {
+      "qid": "f004",
+      "intent": "factoid",
+      "query": "What is the current version of the Acme Platform CLI?",
+      "expected_answer_summary": "Latest stable CLI version (date-stamped from release notes).",
+      "expected_source_ids": ["src_github_public"],
+      "expected_acl": { "min_role": "anonymous" },
+      "must_cite": true,
+      "sensitivity_lane": "hosted_ok",
+      "language": "en"
+    },
+    {
+      "qid": "f005",
+      "intent": "factoid",
+      "query": "Who is the data protection officer named in our standard DPA?",
+      "expected_answer_summary": "Specific name and contact pulled from the standard Data Processing Addendum.",
+      "expected_source_ids": ["src_legal_contracts"],
+      "expected_acl": { "min_role": "manager", "departments": ["legal"] },
+      "must_cite": true,
+      "sensitivity_lane": "self_hosted_only",
+      "language": "en",
+      "expects_acl_denial_for_role": "employee"
+    },
+    {
+      "qid": "f006",
+      "intent": "factoid",
+      "query": "What is the expense reimbursement deadline after a business trip?",
+      "expected_answer_summary": "Expenses must be submitted within 30 days of incurrence.",
+      "expected_source_ids": ["src_internal_docs"],
+      "expected_acl": { "min_role": "employee" },
+      "must_cite": true,
+      "sensitivity_lane": "self_hosted_only",
+      "language": "en"
+    },
+    {
+      "qid": "f007",
+      "intent": "factoid",
+      "query": "What rate-limit headers does the public API return?",
+      "expected_answer_summary": "X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset.",
+      "expected_source_ids": ["src_github_public", "src_public_kb"],
+      "expected_acl": { "min_role": "anonymous" },
+      "must_cite": true,
+      "sensitivity_lane": "hosted_ok",
+      "language": "en"
+    },
+    {
+      "qid": "f008",
+      "intent": "factoid",
+      "query": "What is the on-call rotation length for the Platform team?",
+      "expected_answer_summary": "One-week rotations starting Monday 10:00 UTC.",
+      "expected_source_ids": ["src_internal_docs", "src_github_private"],
+      "expected_acl": { "min_role": "employee", "departments": ["engineering", "operations"] },
+      "must_cite": true,
+      "sensitivity_lane": "self_hosted_only",
+      "language": "en"
+    },
+
+    {
+      "qid": "c001",
+      "intent": "conversational",
+      "query": "We were talking about webhook retries — what's the backoff schedule?",
+      "prior_turns": [
+        { "role": "user", "content": "Does the webhook delivery system retry failed deliveries?" },
+        { "role": "assistant", "content": "Yes, failed webhook deliveries are retried automatically up to a maximum number of attempts." }
+      ],
+      "expected_rewritten_query": "What is the backoff schedule for webhook delivery retries?",
+      "expected_answer_summary": "Exponential backoff starting at 30s, doubling, capped at 1h, max 8 attempts.",
+      "expected_source_ids": ["src_github_public", "src_public_kb"],
+      "expected_acl": { "min_role": "anonymous" },
+      "must_cite": true,
+      "sensitivity_lane": "hosted_ok",
+      "language": "en"
+    },
+    {
+      "qid": "c002",
+      "intent": "conversational",
+      "query": "And what about for production environments?",
+      "prior_turns": [
+        { "role": "user", "content": "What's the recommended database connection pool size?" },
+        { "role": "assistant", "content": "For development environments, 5-10 connections per service instance is typical." }
+      ],
+      "expected_rewritten_query": "What is the recommended database connection pool size for production environments?",
+      "expected_answer_summary": "Production pools: 20-50 per instance, sized to (avg_concurrent_queries * p95_query_ms / 1000).",
+      "expected_source_ids": ["src_internal_docs", "src_github_private"],
+      "expected_acl": { "min_role": "employee", "departments": ["engineering"] },
+      "must_cite": true,
+      "sensitivity_lane": "self_hosted_only",
+      "language": "en"
+    },
+    {
+      "qid": "c003",
+      "intent": "conversational",
+      "query": "Can you give me an example payload?",
+      "prior_turns": [
+        { "role": "user", "content": "How do I send a custom event to the analytics endpoint?" },
+        { "role": "assistant", "content": "POST a JSON body to /v1/events with event_name, user_id, and properties fields." }
+      ],
+      "expected_rewritten_query": "Provide an example JSON payload for a POST to /v1/events on the analytics endpoint.",
+      "expected_answer_summary": "Returns a JSON example with event_name, user_id, timestamp, properties.",
+      "expected_source_ids": ["src_github_public", "src_public_kb"],
+      "expected_acl": { "min_role": "anonymous" },
+      "must_cite": true,
+      "sensitivity_lane": "hosted_ok",
+      "language": "en"
+    },
+    {
+      "qid": "c004",
+      "intent": "conversational",
+      "query": "What about the EU one?",
+      "prior_turns": [
+        { "role": "user", "content": "What's the URL for the US-East data ingestion endpoint?" },
+        { "role": "assistant", "content": "The US-East endpoint is https://ingest.us-east.acme.com/v1." }
+      ],
+      "expected_rewritten_query": "What is the URL for the EU data ingestion endpoint?",
+      "expected_answer_summary": "EU endpoint URL with region pinning explanation.",
+      "expected_source_ids": ["src_public_kb", "src_github_public"],
+      "expected_acl": { "min_role": "anonymous" },
+      "must_cite": true,
+      "sensitivity_lane": "hosted_ok",
+      "language": "en"
+    },
+    {
+      "qid": "c005",
+      "intent": "conversational",
+      "query": "Is that policy different for contractors?",
+      "prior_turns": [
+        { "role": "user", "content": "What's the laptop refresh cycle for full-time employees?" },
+        { "role": "assistant", "content": "Full-time employees get a hardware refresh every 3 years." }
+      ],
+      "expected_rewritten_query": "What is the laptop refresh policy for contractors?",
+      "expected_answer_summary": "Contractor hardware policy details.",
+      "expected_source_ids": ["src_internal_docs"],
+      "expected_acl": { "min_role": "employee" },
+      "must_cite": true,
+      "sensitivity_lane": "self_hosted_only",
+      "language": "en"
+    },
+    {
+      "qid": "c006",
+      "intent": "conversational",
+      "query": "Walk me through the next step.",
+      "prior_turns": [
+        { "role": "user", "content": "How do I escalate a critical customer incident?" },
+        { "role": "assistant", "content": "Step 1: Page the on-call engineer via PagerDuty using the 'sev1-customer' service." }
+      ],
+      "expected_rewritten_query": "What is step 2 of the critical customer incident escalation procedure?",
+      "expected_answer_summary": "Step 2: open an incident channel and assign an incident commander.",
+      "expected_source_ids": ["src_internal_docs"],
+      "expected_acl": { "min_role": "employee", "departments": ["customer_success", "engineering", "operations"] },
+      "must_cite": true,
+      "sensitivity_lane": "self_hosted_only",
+      "language": "en"
+    },
+    {
+      "qid": "c007",
+      "intent": "conversational",
+      "query": "Any known issues with that?",
+      "prior_turns": [
+        { "role": "user", "content": "I'm using the Python SDK v2.4 to upload large files." },
+        { "role": "assistant", "content": "The Python SDK v2.4 supports multipart upload via upload_large()." }
+      ],
+      "expected_rewritten_query": "Are there known issues with the Python SDK v2.4 multipart upload feature?",
+      "expected_answer_summary": "Known issue summary mined from support tickets.",
+      "expected_source_ids": ["src_support_tickets", "src_github_public"],
+      "expected_acl": { "min_role": "employee", "departments": ["customer_success", "engineering"] },
+      "must_cite": true,
+      "sensitivity_lane": "self_hosted_only",
+      "language": "en"
+    },
+    {
+      "qid": "c008",
+      "intent": "conversational",
+      "query": "And how do we cancel one?",
+      "prior_turns": [
+        { "role": "user", "content": "How do I create a scheduled report?" },
+        { "role": "assistant", "content": "Use POST /v1/reports/schedule with cron and recipients fields." }
+      ],
+      "expected_rewritten_query": "How do I cancel a scheduled report?",
+      "expected_answer_summary": "DELETE /v1/reports/schedule/{schedule_id} with required scope.",
+      "expected_source_ids": ["src_github_public", "src_public_kb"],
+      "expected_acl": { "min_role": "anonymous" },
+      "must_cite": true,
+      "sensitivity_lane": "hosted_ok",
+      "language": "en"
+    },
+
+    {
+      "qid": "h001",
+      "intent": "how_to",
+      "query": "How do I set up SSO with Okta for my workspace?",
+      "expected_answer_summary": "Step-by-step: create SAML app in Okta, configure metadata URL in Acme admin, map attributes, test with a single user, enable for all.",
+      "expected_step_count_min": 4,
+      "expected_source_ids": ["src_public_kb", "src_internal_docs"],
+      "expected_acl": { "min_role": "anonymous" },
+      "must_cite": true,
+      "sensitivity_lane": "hosted_ok",
+      "language": "en"
+    },
+    {
+      "qid": "h002",
+      "intent": "how_to",
+      "query": "How do I provision a new staging environment in our internal platform?",
+      "expected_answer_summary": "Procedure using the platform CLI / IaC pipeline.",
+      "expected_step_count_min": 5,
+      "expected_source_ids": ["src_github_private", "src_internal_docs"],
+      "expected_acl": { "min_role": "employee", "departments": ["engineering"] },
+      "must_cite": true,
+      "sensitivity_lane": "self_hosted_only",
+      "language": "en"
+    },
+    {
+      "qid": "h003",
+      "intent": "how_to",
+      "query": "How do I rotate API keys for a service account?",
+      "expected_answer_summary": "Generate new key in admin console, update secret store, deploy, revoke old key after grace period.",
+      "expected_step_count_min": 4,
+      "expected_source_ids": ["src_public_kb", "src_github_public"],
+      "expected_acl": { "min_role": "anonymous" },
+      "must_cite": true,
+      "sensitivity_lane": "hosted_ok",
+      "language": "en"
+    },
+    {
+      "qid": "h004",
+      "intent": "how_to",
+      "query": "How do I onboard a new vendor in our procurement system?",
+      "expected_answer_summary": "Submit vendor questionnaire, security review, legal review of MSA, finance setup.",
+      "expected_step_count_min": 4,
+      "expected_source_ids": ["src_internal_docs"],
+      "expected_acl": { "min_role": "employee", "departments": ["finance", "legal"] },
+      "must_cite": true,
+      "sensitivity_lane": "self_hosted_only",
+      "language": "en"
+    },
+    {
+      "qid": "h005",
+      "intent": "how_to",
+      "query": "How do I run an incident postmortem?",
+      "expected_answer_summary": "Schedule within 5 business days, blameless template, root cause + action items, publish.",
+      "expected_step_count_min": 5,
+      "expected_source_ids": ["src_internal_docs"],
+      "expected_acl": { "min_role": "employee", "departments": ["engineering", "operations"] },
+      "must_cite": true,
+      "sensitivity_lane": "self_hosted_only",
+      "language": "en"
+    },
+    {
+      "qid": "h006",
+      "intent": "how_to",
+      "query": "How do I configure webhooks for billing events in my account?",
+      "expected_answer_summary": "Admin console → Webhooks → New endpoint → select billing.* events → verify signature.",
+      "expected_step_count_min": 4,
+      "expected_source_ids": ["src_public_kb", "src_github_public"],
+      "expected_acl": { "min_role": "anonymous" },
+      "must_cite": true,
+      "sensitivity_lane": "hosted_ok",
+      "language": "en"
+    },
+    {
+      "qid": "h007",
+      "intent": "how_to",
+      "query": "How do I file a data subject access request on behalf of a customer?",
+      "expected_answer_summary": "Verify identity, log in DSAR tracker, fulfil within 30 days, deliver via secure channel.",
+      "expected_step_count_min": 4,
+      "expected_source_ids": ["src_internal_docs", "src_legal_contracts"],
+      "expected_acl": { "min_role": "manager", "departments": ["legal", "customer_success"] },
+      "must_cite": true,
+      "sensitivity_lane": "self_hosted_only",
+      "language": "en"
+    },
+    {
+      "qid": "h008",
+      "intent": "how_to",
+      "query": "How do I deploy a new model version through the ML platform?",
+      "expected_answer_summary": "Register model, run eval, canary rollout, monitor metrics, full promote.",
+      "expected_step_count_min": 5,
+      "expected_source_ids": ["src_github_private", "src_internal_docs"],
+      "expected_acl": { "min_role": "employee", "departments": ["engineering"] },
+      "must_cite": true,
+      "sensitivity_lane": "self_hosted_only",
+      "language": "en"
+    },
+
+    {
+      "qid": "neg001",
+      "intent": "factoid",
+      "query": "What is the unreleased pricing for the upcoming Enterprise Tier?",
+      "expected_behavior": "refuse_low_confidence",
+      "expected_answer_summary": "Should respond with 'I don't have information on this in the knowledge base' and offer related public pricing pages.",
+      "expected_source_ids": [],
+      "expected_acl": { "min_role": "anonymous" },
+      "must_cite": false,
+      "sensitivity_lane": "hosted_ok",
+      "language": "en"
+    },
+    {
+      "qid": "neg002",
+      "intent": "factoid",
+      "query": "Show me the contract clause for vendor X",
+      "expected_behavior": "acl_deny_for_non_legal",
+      "expected_answer_summary": "For employee role outside legal: ACL denial with no document content leaked. For legal manager: returns the clause.",
+      "expected_source_ids": ["src_legal_contracts"],
+      "expected_acl": { "min_role": "manager", "departments": ["legal"] },
+      "must_cite": true,
+      "sensitivity_lane": "self_hosted_only",
+      "language": "en"
+    }
+  ],
+  "metrics_to_track": [
+    "retrieval_recall_at_10",
+    "retrieval_mrr",
+    "ragas_faithfulness",
+    "ragas_answer_relevancy",
+    "ragas_context_precision",
+    "ragas_context_recall",
+    "citation_coverage_rate",
+    "nli_supported_sentence_rate",
+    "acl_denial_correctness",
+    "lane_routing_correctness",
+    "p50_latency_ms",
+    "p95_latency_ms",
+    "refusal_rate_on_unanswerable"
+  ],
+  "sme_curation_workflow": {
+    "step_1": "Each SME (see sme_contacts.json) drafts 5-10 queries and gold answers in their domain.",
+    "step_2": "Engineering reviews for ACL/lane correctness and converts to this schema.",
+    "step_3": "Second SME reviews each example (cross-validation).",
+    "step_4": "Examples flagged 'expects_acl_denial_for_role' must include both a permitted-user and a denied-user variant.",
+    "step_5": "Negative examples (unanswerable, ACL-denied) must be at least 10% of the total set.",
+    "target_size_v1": 200,
+    "target_size_v2": 500
+  }
+}

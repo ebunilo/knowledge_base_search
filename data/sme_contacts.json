@@ -1,0 +1,90 @@
+[
+  {
+    "sme_id": "sme_001",
+    "name": "Amaka Okeke",
+    "email": "amaka.okeke@acme.internal",
+    "department": "engineering",
+    "role": "principal_engineer",
+    "domains": ["platform_architecture", "infrastructure", "internal_apis"],
+    "covers_sources": ["src_github_private", "src_internal_docs"],
+    "languages": ["en"],
+    "availability_hours_per_week": 4
+  },
+  {
+    "sme_id": "sme_002",
+    "name": "David Lindqvist",
+    "email": "david.lindqvist@acme.internal",
+    "department": "engineering",
+    "role": "staff_engineer",
+    "domains": ["public_apis", "developer_relations", "openapi_specs"],
+    "covers_sources": ["src_github_public", "src_public_kb"],
+    "languages": ["en"],
+    "availability_hours_per_week": 3
+  },
+  {
+    "sme_id": "sme_003",
+    "name": "Priya Raman",
+    "email": "priya.raman@acme.internal",
+    "department": "customer_success",
+    "role": "support_lead",
+    "domains": ["troubleshooting", "common_incidents", "ticket_taxonomy"],
+    "covers_sources": ["src_support_tickets", "src_public_kb"],
+    "languages": ["en"],
+    "availability_hours_per_week": 5
+  },
+  {
+    "sme_id": "sme_004",
+    "name": "Marcus Hoffmann",
+    "email": "marcus.hoffmann@acme.internal",
+    "department": "legal",
+    "role": "senior_counsel",
+    "domains": ["contracts", "data_protection", "vendor_agreements"],
+    "covers_sources": ["src_legal_contracts"],
+    "languages": ["en", "de"],
+    "availability_hours_per_week": 2
+  },
+  {
+    "sme_id": "sme_005",
+    "name": "Sofia Alvarez",
+    "email": "sofia.alvarez@acme.internal",
+    "department": "product",
+    "role": "principal_pm",
+    "domains": ["product_requirements", "roadmap", "feature_flags"],
+    "covers_sources": ["src_product_specs"],
+    "languages": ["en", "es"],
+    "availability_hours_per_week": 3
+  },
+  {
+    "sme_id": "sme_006",
+    "name": "Kenji Watanabe",
+    "email": "kenji.watanabe@acme.internal",
+    "department": "operations",
+    "role": "site_reliability_lead",
+    "domains": ["incident_response", "runbooks", "observability"],
+    "covers_sources": ["src_internal_docs", "src_github_private"],
+    "languages": ["en"],
+    "availability_hours_per_week": 4
+  },
+  {
+    "sme_id": "sme_007",
+    "name": "Aisha Bello",
+    "email": "aisha.bello@acme.internal",
+    "department": "people",
+    "role": "people_ops_partner",
+    "domains": ["hr_policies", "onboarding", "benefits"],
+    "covers_sources": ["src_internal_docs"],
+    "languages": ["en"],
+    "availability_hours_per_week": 2
+  },
+  {
+    "sme_id": "sme_008",
+    "name": "Lukas Fischer",
+    "email": "lukas.fischer@acme.internal",
+    "department": "finance",
+    "role": "controller",
+    "domains": ["procurement", "expense_policy", "vendor_onboarding"],
+    "covers_sources": ["src_internal_docs"],
+    "languages": ["en", "de"],
+    "availability_hours_per_week": 1
+  }
+]

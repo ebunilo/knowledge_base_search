@@ -1,0 +1,176 @@
+{
+  "tenant_model": {
+    "internal_tenant_id": "tenant_acme_staff",
+    "external_access_model": "anonymous_public_only",
+    "notes": "External users (customers) consume only the public collection without onboarding. Only staff are provisioned in the IdP and synced here."
+  },
+  "departments": [
+    {
+      "department_id": "engineering",
+      "name": "Engineering",
+      "default_collections": ["public_v1", "tenant_acme_staff_private_v1"],
+      "allowed_source_ids": ["src_internal_docs", "src_github_public", "src_github_private", "src_product_specs", "src_public_kb"],
+      "data_residency": "eu-west-1"
+    },
+    {
+      "department_id": "customer_success",
+      "name": "Customer Success",
+      "default_collections": ["public_v1", "tenant_acme_staff_private_v1"],
+      "allowed_source_ids": ["src_internal_docs", "src_public_kb", "src_support_tickets"],
+      "data_residency": "eu-west-1"
+    },
+    {
+      "department_id": "legal",
+      "name": "Legal & Compliance",
+      "default_collections": ["public_v1", "tenant_acme_staff_private_v1"],
+      "allowed_source_ids": ["src_internal_docs", "src_legal_contracts"],
+      "data_residency": "eu-west-1"
+    },
+    {
+      "department_id": "product",
+      "name": "Product",
+      "default_collections": ["public_v1", "tenant_acme_staff_private_v1"],
+      "allowed_source_ids": ["src_internal_docs", "src_product_specs", "src_public_kb"],
+      "data_residency": "eu-west-1"
+    },
+    {
+      "department_id": "operations",
+      "name": "Operations / SRE",
+      "default_collections": ["public_v1", "tenant_acme_staff_private_v1"],
+      "allowed_source_ids": ["src_internal_docs", "src_github_private"],
+      "data_residency": "eu-west-1"
+    },
+    {
+      "department_id": "people",
+      "name": "People Ops",
+      "default_collections": ["public_v1", "tenant_acme_staff_private_v1"],
+      "allowed_source_ids": ["src_internal_docs"],
+      "data_residency": "eu-west-1"
+    },
+    {
+      "department_id": "finance",
+      "name": "Finance",
+      "default_collections": ["public_v1", "tenant_acme_staff_private_v1"],
+      "allowed_source_ids": ["src_internal_docs"],
+      "data_residency": "eu-west-1"
+    }
+  ],
+  "roles": [
+    { "role_id": "anonymous", "rank": 0, "description": "External user, public docs only" },
+    { "role_id": "employee",  "rank": 1, "description": "Standard staff access" },
+    { "role_id": "manager",   "rank": 2, "description": "Includes restricted-tier docs in own department" },
+    { "role_id": "admin",     "rank": 3, "description": "Cross-department restricted access; audited" }
+  ],
+  "users": [
+    {
+      "user_id": "u_001",
+      "email": "amaka.okeke@acme.internal",
+      "display_name": "Amaka Okeke",
+      "department": "engineering",
+      "role": "manager",
+      "extra_grants": []
+    },
+    {
+      "user_id": "u_002",
+      "email": "david.lindqvist@acme.internal",
+      "display_name": "David Lindqvist",
+      "department": "engineering",
+      "role": "employee",
+      "extra_grants": []
+    },
+    {
+      "user_id": "u_003",
+      "email": "priya.raman@acme.internal",
+      "display_name": "Priya Raman",
+      "department": "customer_success",
+      "role": "manager",
+      "extra_grants": []
+    },
+    {
+      "user_id": "u_004",
+      "email": "marcus.hoffmann@acme.internal",
+      "display_name": "Marcus Hoffmann",
+      "department": "legal",
+      "role": "manager",
+      "extra_grants": []
+    },
+    {
+      "user_id": "u_005",
+      "email": "sofia.alvarez@acme.internal",
+      "display_name": "Sofia Alvarez",
+      "department": "product",
+      "role": "manager",
+      "extra_grants": []
+    },
+    {
+      "user_id": "u_006",
+      "email": "kenji.watanabe@acme.internal",
+      "display_name": "Kenji Watanabe",
+      "department": "operations",
+      "role": "manager",
+      "extra_grants": ["src_github_private:read"]
+    },
+    {
+      "user_id": "u_007",
+      "email": "aisha.bello@acme.internal",
+      "display_name": "Aisha Bello",
+      "department": "people",
+      "role": "employee",
+      "extra_grants": []
+    },
+    {
+      "user_id": "u_008",
+      "email": "lukas.fischer@acme.internal",
+      "display_name": "Lukas Fischer",
+      "department": "finance",
+      "role": "manager",
+      "extra_grants": []
+    },
+    {
+      "user_id": "u_009",
+      "email": "ngozi.eze@acme.internal",
+      "display_name": "Ngozi Eze",
+      "department": "engineering",
+      "role": "employee",
+      "extra_grants": []
+    },
+    {
+      "user_id": "u_010",
+      "email": "samir.haddad@acme.internal",
+      "display_name": "Samir Haddad",
+      "department": "customer_success",
+      "role": "employee",
+      "extra_grants": []
+    },
+    {
+      "user_id": "u_011",
+      "email": "yuki.tanaka@acme.internal",
+      "display_name": "Yuki Tanaka",
+      "department": "product",
+      "role": "employee",
+      "extra_grants": []
+    },
+    {
+      "user_id": "u_012",
+      "email": "elena.popescu@acme.internal",
+      "display_name": "Elena Popescu",
+      "department": "operations",
+      "role": "admin",
+      "extra_grants": ["cross_department_audit:read"]
+    }
+  ],
+  "jwt_claims_contract": {
+    "required": ["sub", "email", "tenant_id", "department", "role", "exp"],
+    "optional": ["extra_grants", "region"],
+    "example": {
+      "sub": "u_006",
+      "email": "kenji.watanabe@acme.internal",
+      "tenant_id": "tenant_acme_staff",
+      "department": "operations",
+      "role": "manager",
+      "extra_grants": ["src_github_private:read"],
+      "region": "eu-west-1",
+      "exp": 1745452800
+    }
+  }
+}
