@@ -1,0 +1,80 @@
+openapi: 3.0.3
+info:
+  title: Acme Platform API
+  version: "1.4.0"
+  description: |
+    Public API for the Acme Platform. Use this to submit and manage jobs,
+    inspect workspaces, and read audit events.
+servers:
+  - url: https://api.acme.com/v1
+    description: Production
+  - url: https://api.staging.acme.com/v1
+    description: Staging
+paths:
+  /jobs:
+    get:
+      summary: List jobs
+      description: Returns a paginated list of jobs in the caller's workspace.
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, running, succeeded, failed]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 25
+            maximum: 100
+      responses:
+        "200":
+          description: OK
+    post:
+      summary: Submit a job
+      description: Creates and queues a new job in the caller's workspace.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JobSubmission"
+      responses:
+        "201":
+          description: Created
+  /jobs/{id}:
+    get:
+      summary: Get a job
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+        "404":
+          description: Not found
+components:
+  schemas:
+    JobSubmission:
+      type: object
+      required: [name, image]
+      properties:
+        name:
+          type: string
+          description: A human-readable label for the job.
+        image:
+          type: string
+          description: Container image to run.
+        cpu:
+          type: string
+          default: "1"
+        memory:
+          type: string
+          default: "2Gi"
+        env:
+          type: object
+          additionalProperties:
+            type: string

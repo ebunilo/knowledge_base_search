@@ -1,0 +1,48 @@
+# Internal service deployment config — DO NOT DISTRIBUTE
+# Used by the platform team for region rollouts.
+
+service:
+  name: control-plane
+  version: "2.18.3"
+  owner: platform-eng@acme.internal
+  tier: tier-0
+
+regions:
+  eu-west-1:
+    primary: true
+    replicas: 6
+    instance_type: m7i.2xlarge
+    database:
+      host: db-prod-eu-west-1.internal
+      port: 5432
+      username: control_plane_rw
+      # Password is stored in AWS Secrets Manager:
+      #   arn:aws:secretsmanager:eu-west-1:111122223333:secret:prod/cp/db
+      password_secret_arn: arn:aws:secretsmanager:eu-west-1:111122223333:secret:prod/cp/db
+  us-east-1:
+    primary: false
+    replicas: 4
+    instance_type: m7i.xlarge
+    database:
+      host: db-prod-us-east-1.internal
+      port: 5432
+      username: control_plane_rw
+      password_secret_arn: arn:aws:secretsmanager:us-east-1:111122223333:secret:prod/cp/db
+
+feature_flags:
+  enable_new_scheduler: true
+  strict_acl_enforcement: true
+  debug_logging: false
+
+slo:
+  availability_target: 99.95
+  p99_latency_ms: 450
+  error_budget_window_days: 30
+
+alerts:
+  pagerduty_service_key: prod-control-plane
+  slack_channel: "#sre-alerts"
+  notify_on:
+    - availability_breach
+    - p99_latency_breach
+    - replication_lag_gt_30s

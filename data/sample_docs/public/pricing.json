@@ -1,0 +1,41 @@
+{
+  "plans": [
+    {
+      "name": "Free",
+      "price_per_month_usd": 0,
+      "included_compute_hours": 20,
+      "included_storage_gb": 5,
+      "support": "community",
+      "features": ["single_workspace", "public_jobs_only"]
+    },
+    {
+      "name": "Team",
+      "price_per_month_usd": 99,
+      "included_compute_hours": 400,
+      "included_storage_gb": 100,
+      "support": "business_hours_email",
+      "features": ["multi_workspace", "private_jobs", "audit_logs", "sso"]
+    },
+    {
+      "name": "Enterprise",
+      "price_per_month_usd": null,
+      "included_compute_hours": "custom",
+      "included_storage_gb": "custom",
+      "support": "24x7_dedicated",
+      "features": [
+        "multi_region",
+        "private_jobs",
+        "audit_logs",
+        "sso",
+        "vpc_peering",
+        "bring_your_own_key",
+        "dedicated_tenant"
+      ]
+    }
+  ],
+  "faq": {
+    "overage": "Compute beyond your included hours is billed at $0.08/core-hour.",
+    "contracts": "Enterprise contracts are custom; contact sales.",
+    "cancellation": "Monthly plans can be cancelled any time and take effect at period end."
+  }
+}

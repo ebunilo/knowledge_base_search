@@ -178,5 +178,55 @@
     "refresh_cadence": "every_30_min",
     "pii_likelihood": "low",
     "description": "Product requirements, design specs, RFCs."
+  },
+  {
+    "source_id": "src_sample_public",
+    "source_name": "Sample docs — public lane (demo)",
+    "connector_type": "localfs",
+    "connector_config": {
+      "base_path": "./data/sample_docs/public",
+      "include_extensions": [".pdf", ".md", ".html", ".yml", ".yaml", ".json", ".txt"],
+      "exclude_globs": ["**/.git/**", "**/__pycache__/**"]
+    },
+    "document_count": 0,
+    "size_mb": 0,
+    "primary_formats": ["markdown", "yaml", "json", "pdf"],
+    "language": "en",
+    "region": "global",
+    "sensitivity_lane": "hosted_ok",
+    "default_visibility": "public",
+    "default_acl": {
+      "departments": ["*"],
+      "min_role": "anonymous"
+    },
+    "owner_contact": "demo@acme.internal",
+    "refresh_cadence": "manual",
+    "pii_likelihood": "low",
+    "description": "Local-filesystem demo corpus for the public lane. Drop files in data/sample_docs/public/."
+  },
+  {
+    "source_id": "src_sample_internal",
+    "source_name": "Sample docs — self-hosted lane (demo)",
+    "connector_type": "localfs",
+    "connector_config": {
+      "base_path": "./data/sample_docs/internal",
+      "include_extensions": [".pdf", ".md", ".html", ".yml", ".yaml", ".json", ".txt"],
+      "exclude_globs": ["**/.git/**", "**/__pycache__/**"]
+    },
+    "document_count": 0,
+    "size_mb": 0,
+    "primary_formats": ["markdown", "yaml", "json", "pdf"],
+    "language": "en",
+    "region": "eu-west-1",
+    "sensitivity_lane": "self_hosted_only",
+    "default_visibility": "internal",
+    "default_acl": {
+      "departments": ["engineering", "operations", "people"],
+      "min_role": "employee"
+    },
+    "owner_contact": "demo@acme.internal",
+    "refresh_cadence": "manual",
+    "pii_likelihood": "medium",
+    "description": "Local-filesystem demo corpus for the self-hosted lane. Drop files in data/sample_docs/internal/."
   }
 ]
