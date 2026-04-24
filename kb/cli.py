@@ -7,6 +7,8 @@ Usage:
     kb ingest --source src_sample_public --stage index
     kb ingest --source src_sample_public --stage embed --limit 5
     kb inspect --source src_sample_public --doc-index 0 --show-children
+    kb search --query "how does the API gateway authenticate?"
+    kb search --query "..." --as-user u_001
     kb health
 """
 
@@ -206,6 +208,154 @@ def inspect(
 
     click.echo(f"No document at index {doc_index} for source {source}", err=True)
     sys.exit(2)
+
+
+# --------------------------------------------------------------------------- #
+# search
+# --------------------------------------------------------------------------- #
+
+@cli.command("search")
+@click.option("--query", "-q", required=True, help="Natural-language query.")
+@click.option(
+    "--as-user",
+    "as_user",
+    default="anonymous",
+    show_default=True,
+    help="user_id / email from staff_directory.json, or 'anonymous'.",
+)
+@click.option(
+    "--role",
+    default=None,
+    help="Override role (default: taken from staff_directory entry).",
+)
+@click.option(
+    "--dept",
+    default=None,
+    help="Override department (default: taken from staff_directory entry).",
+)
+@click.option("--top-k", type=int, default=10, show_default=True)
+@click.option("--top-k-dense", type=int, default=30, show_default=True)
+@click.option("--top-k-sparse", type=int, default=30, show_default=True)
+@click.option(
+    "--dense-weight",
+    type=float,
+    default=1.0,
+    show_default=True,
+    help="RRF weight for dense retriever.",
+)
+@click.option(
+    "--sparse-weight",
+    type=float,
+    default=1.0,
+    show_default=True,
+    help="RRF weight for sparse retriever.",
+)
+@click.option(
+    "--no-parent",
+    is_flag=True,
+    help="Skip parent content in output (faster, fewer DB reads).",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit JSON instead of the formatted text view.",
+)
+def search(
+    query: str,
+    as_user: str,
+    role: str | None,
+    dept: str | None,
+    top_k: int,
+    top_k_dense: int,
+    top_k_sparse: int,
+    dense_weight: float,
+    sparse_weight: float,
+    no_parent: bool,
+    as_json: bool,
+) -> None:
+    """Run a hybrid (dense + BM25) search against the indexed corpus."""
+    import json as _json
+
+    from kb.retrieval import Retriever, RetrievalConfig, UserContext
+    from kb.retrieval.acl import load_user
+
+    try:
+        user = load_user(as_user)
+    except (FileNotFoundError, KeyError):
+        user = UserContext(user_id=as_user or "anonymous")
+
+    if role is not None:
+        user = user.model_copy(update={"role": role})
+    if dept is not None:
+        user = user.model_copy(update={"department": dept})
+
+    cfg = RetrievalConfig(
+        top_k_dense=top_k_dense,
+        top_k_sparse=top_k_sparse,
+        top_k_final=top_k,
+        rrf_dense_weight=dense_weight,
+        rrf_sparse_weight=sparse_weight,
+        include_parent_content=not no_parent,
+    )
+
+    result = Retriever().retrieve(query=query, user=user, config=cfg)
+
+    if as_json:
+        click.echo(result.model_dump_json(indent=2))
+        return
+
+    click.echo("")
+    click.echo(f"query: {result.query!r}")
+    click.echo(
+        f"user:  {user.user_id} (tenant={user.tenant_id or '∅'} "
+        f"dept={user.department or '∅'} role={user.role})"
+    )
+    click.echo(f"collections: {', '.join(result.collections_searched)}")
+    click.echo(
+        f"candidates: dense={result.dense_candidates} "
+        f"sparse={result.sparse_candidates} "
+        f"fused={result.fused_candidates} "
+        f"final={result.final_hits}"
+    )
+    click.echo(
+        f"timing_ms: embed={result.embed_ms} dense={result.dense_ms} "
+        f"sparse={result.sparse_ms} fuse={result.fusion_ms} "
+        f"parents={result.parent_ms} total={result.total_ms}"
+    )
+    click.echo("─" * 60)
+
+    if not result.hits:
+        click.echo("(no hits)")
+        return
+
+    for i, h in enumerate(result.hits, start=1):
+        click.echo(
+            f"[{i}] score={h.score:.4f}  d={h.dense_rank}/{_fmt(h.dense_score)} "
+            f"s={h.sparse_rank}/{_fmt(h.sparse_score)}  vis={h.visibility}"
+        )
+        click.echo(f"    title:     {h.title or '(no title)'}")
+        click.echo(f"    section:   {h.section_path or '-'}")
+        click.echo(f"    source:    {h.source_id}  ({h.source_uri})")
+        for mv in h.matched_via:
+            if mv.kind == "question" and mv.text:
+                click.echo(f"    matched:   question '{mv.text}'")
+            else:
+                click.echo(f"    matched:   {mv.kind} rank={mv.rank}")
+        snippet = (h.content or "").strip().replace("\n", " ")
+        if len(snippet) > 200:
+            snippet = snippet[:200] + "…"
+        click.echo(f"    snippet:   {snippet}")
+        if not no_parent and h.parent_content:
+            parent = h.parent_content.strip().replace("\n", " ")
+            if len(parent) > 300:
+                parent = parent[:300] + "…"
+            click.echo(f"    parent:    {parent}")
+        click.echo("")
+
+
+def _fmt(x: float | None) -> str:
+    return "-" if x is None else f"{x:.3f}"
 
 
 # --------------------------------------------------------------------------- #
