@@ -16,7 +16,7 @@ retrieved (`matched_via`).
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -92,6 +92,24 @@ class RetrievalConfig(BaseModel):
     # None = no restriction.
     source_allowlist: Optional[list[str]] = None
 
+    # ------------- Query rewriting (Slice 2) ------------- #
+    # "off" keeps behaviour identical to Slice 1. "multi_query" generates
+    # paraphrases; "hyde" generates a hypothetical answer passage; "both"
+    # generates both in one LLM call.
+    rewrite_strategy: Literal["off", "multi_query", "hyde", "both"] = "off"
+    multi_query_k: int = 2
+
+    # ------------- Cross-encoder reranking (Slice 2) ------------- #
+    rerank: bool = True
+    # Number of fused candidates sent to the reranker. Higher = better
+    # precision ceiling but more reranker cost. The reranker is only ever
+    # invoked on the post-ACL, parent-deduped list — never on raw RRF.
+    rerank_top_n: int = 30
+
+    # ------------- Parallelism ------------- #
+    # Cap the thread pool used for dense/sparse fan-out.
+    max_parallel_workers: int = 8
+
 
 # --------------------------------------------------------------------------- #
 # Results
@@ -126,10 +144,13 @@ class RetrievalHit(BaseModel):
     # is True (the default). This is what goes into the LLM context window.
     parent_content: Optional[str] = None
 
-    # Aggregate score (RRF). Higher is better. Individual retriever scores
-    # and ranks are retained for diagnostics and for the reranker in the
-    # next slice.
+    # Aggregate score. When reranking is on this is the cross-encoder
+    # score; otherwise it's the RRF score. `rrf_score` / `rerank_score`
+    # are always populated independently so you can audit both.
     score: float = 0.0
+    rrf_score: Optional[float] = None
+    rerank_score: Optional[float] = None
+    rerank_rank: Optional[int] = None          # 1-based rank from the reranker
     dense_rank: Optional[int] = None
     sparse_rank: Optional[int] = None
     dense_score: Optional[float] = None
@@ -153,16 +174,28 @@ class RetrievalResult(BaseModel):
     user_id: str
     hits: list[RetrievalHit]
 
+    # The actual list of queries hitting the dense retriever (original +
+    # rewrites + HyDE passage if any). Useful for tracing / evals.
+    query_variants: list[str] = Field(default_factory=list)
+    hyde_passage: Optional[str] = None
+    rewrite_strategy: str = "off"
+    rewrite_fallback: Optional[str] = None     # set when the rewriter silently failed
+    rerank_applied: bool = False
+    rerank_fallback: Optional[str] = None      # set when rerank silently failed
+
     # Counts + per-stage timing for tracing.
     collections_searched: list[str] = Field(default_factory=list)
     dense_candidates: int = 0
     sparse_candidates: int = 0
     fused_candidates: int = 0
+    reranked_candidates: int = 0
     final_hits: int = 0
 
+    rewrite_ms: int = 0
     embed_ms: int = 0
     dense_ms: int = 0
     sparse_ms: int = 0
     fusion_ms: int = 0
+    rerank_ms: int = 0
     parent_ms: int = 0
     total_ms: int = 0
