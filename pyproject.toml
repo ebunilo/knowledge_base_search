@@ -37,6 +37,9 @@ dependencies = [
     # CLI
     "click>=8.1",
 
+    # Sparse retrieval (in-process BM25)
+    "rank-bm25>=0.2.2",
+
     # Observability
     "langsmith==0.1.147",
 ]
