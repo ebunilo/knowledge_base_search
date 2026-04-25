@@ -10,6 +10,7 @@ Usage:
     kb search --query "how does the API gateway authenticate?"
     kb search --query "..." --as-user u_001
     kb ask --query "..." --as-user u_001 --stream
+    kb eval run --golden-set data/golden_set.json --limit 5 --calibrate
     kb health
 """
 
@@ -853,6 +854,121 @@ def sessions_delete(session_id: str, as_user: str) -> None:
         click.echo(f"FORBIDDEN: {exc}", err=True)
         sys.exit(3)
     click.echo("deleted" if deleted else "not found")
+
+
+# --------------------------------------------------------------------------- #
+# eval (Phase 3 · Slice 2C)
+# --------------------------------------------------------------------------- #
+
+@cli.group("eval")
+def eval_group() -> None:
+    """Run golden-set evaluation, calibration, and (optional) Ragas."""
+
+
+@eval_group.command("run")
+@click.option(
+    "--golden-set",
+    "golden_path",
+    default="data/golden_set.json",
+    show_default=True,
+    type=click.Path(exists=True, dir_okay=False),
+)
+@click.option("--limit", type=int, default=None, help="Run only the first N examples.")
+@click.option(
+    "--qids", default=None,
+    help="Comma-separated qid filter (e.g. f001,c001,neg001).",
+)
+@click.option(
+    "--skip-faithfulness/--faithfulness",
+    "skip_faithfulness",
+    default=True, show_default=True,
+    help="Disable NLI per row for speed (default: skip).",
+)
+@click.option(
+    "--output-json", "output_json", default=None,
+    type=click.Path(dir_okay=False),
+    help="Write full per-row output as JSON.",
+)
+@click.option(
+    "--langsmith", "use_langsmith", is_flag=True,
+    help="Enable LangSmith tracing (set LANGSMITH_API_KEY in .env).",
+)
+@click.option(
+    "--ragas", "use_ragas", is_flag=True,
+    help="Run optional Ragas metrics (pip install 'ragas datasets').",
+)
+@click.option(
+    "--calibrate", "do_calibrate", is_flag=True,
+    help="Print suggested min_score + min_confidence from this run.",
+)
+def eval_run(
+    golden_path: str,
+    limit: int | None,
+    qids: str | None,
+    skip_faithfulness: bool,
+    output_json: str | None,
+    use_langsmith: bool,
+    use_ragas: bool,
+    do_calibrate: bool,
+) -> None:
+    """Run `data/golden_set.json` end-to-end through the Generator."""
+    import os
+
+    if use_langsmith:
+        os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
+        os.environ.setdefault("LANGCHAIN_PROJECT", "kb-golden-eval")
+
+    from kb.eval.calibration import build_report
+    from kb.eval.ragas_batch import run_ragas_on_rows
+    from kb.eval.runner import run_golden_eval, save_json
+    from kb.settings import get_settings
+
+    get_settings()  # log warnings once
+
+    qf = [q.strip() for q in qids.split(",") if q.strip()] if qids else None
+    rows = run_golden_eval(
+        golden_path,
+        limit=limit,
+        qid_filter=qf,
+        skip_faithfulness=skip_faithfulness,
+    )
+
+    if output_json:
+        save_json(output_json, rows)
+
+    if use_ragas and rows:
+        rag = run_ragas_on_rows(rows)
+        for k, v in sorted(rag.items()):
+            click.echo(f"ragas  {k}: {v:.4f}")
+
+    passed = sum(1 for r in rows if r.get("rule_pass"))
+    n = len(rows)
+    click.echo("")
+    click.echo(f"golden_set: {golden_path}")
+    click.echo(f"rule_pass:  {passed}/{n}")
+    for r in rows:
+        st = "OK " if r.get("rule_pass") else "FAIL"
+        emsg = (r.get("error") or "")
+        err = f"  err={emsg[:60]}…" if len(emsg) > 60 else (f"  err={emsg}" if emsg else "")
+        q = (r.get("qid") or "?")[:8]
+        click.echo(
+            f"  {st}  {q:8s}  top={r.get('top_hit_score', 0):.3f}  "
+            f"conf={r.get('confidence', 0):.2f}  {err}",
+        )
+        if not r.get("rule_pass") and r.get("checks"):
+            for ck, ok in (r.get("checks") or {}).items():
+                if not ok:
+                    click.echo(f"         ! {ck}")
+
+    if do_calibrate:
+        rep = build_report(rows)
+        click.echo("")
+        click.echo("--- calibration (heuristic) ---")
+        for line in rep.notes:
+            click.echo(line)
+        d = rep.model_dump_jsonable()
+        click.echo(f"pass_top_score:   {d.get('top_score_pass', {})}")
+        click.echo(f"fail_top_score:  {d.get('top_score_fail', {})}")
 
 
 def main() -> None:
