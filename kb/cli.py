@@ -467,6 +467,19 @@ def _fmt(x: float | None) -> str:
     help="Entailment probability \u2265 this counts a sentence as supported.",
 )
 @click.option(
+    "--stepback/--no-stepback",
+    default=False, show_default=True,
+    help="Add a step-back (broader) variant to retrieval.",
+)
+@click.option(
+    "--session-id", default=None,
+    help="Continue (or create) a Redis-backed conversation session.",
+)
+@click.option(
+    "--new-session", is_flag=True,
+    help="Force a fresh session — ignored if --session-id is also passed.",
+)
+@click.option(
     "--stream/--no-stream",
     default=True, show_default=True,
     help="Stream tokens to the terminal as they arrive.",
@@ -489,6 +502,9 @@ def ask(
     temperature: float | None,
     check_faithfulness: bool | None,
     faithfulness_threshold: float | None,
+    stepback: bool,
+    session_id: str | None,
+    new_session: bool,
     stream: bool,
     as_json: bool,
 ) -> None:
@@ -496,6 +512,7 @@ def ask(
     from kb.generation import Generator, GenerationConfig
     from kb.retrieval import RetrievalConfig, UserContext
     from kb.retrieval.acl import load_user
+    from kb.sessions import SessionOwnershipError
     from kb.settings import get_settings
 
     try:
@@ -513,7 +530,22 @@ def ask(
         rerank=rerank,
         rewrite_strategy=rewrite,  # type: ignore[arg-type]
         multi_query_k=multi_query_k,
+        stepback=stepback,
     )
+
+    # Session handling: --new-session always wins; --session-id alone
+    # creates-on-first-use; neither = stateless.
+    effective_session_id: str | None = None
+    if new_session and not session_id:
+        from kb.sessions import SessionManager
+        try:
+            mgr = SessionManager(settings)
+            effective_session_id = mgr.new_session_id()
+            click.echo(f"new session: {effective_session_id}", err=True)
+        except Exception as exc:  # noqa: BLE001
+            click.echo(f"WARN: failed to mint session: {exc}", err=True)
+    elif session_id:
+        effective_session_id = session_id
     gcfg = GenerationConfig(
         context_budget_tokens=(
             context_budget
@@ -548,10 +580,15 @@ def ask(
     gen = Generator(settings=settings)
 
     if as_json or not stream:
-        result = gen.ask(
-            query=query, user=user,
-            retrieval_config=rcfg, generation_config=gcfg,
-        )
+        try:
+            result = gen.ask(
+                query=query, user=user,
+                retrieval_config=rcfg, generation_config=gcfg,
+                session_id=effective_session_id,
+            )
+        except SessionOwnershipError as exc:
+            click.echo(f"FORBIDDEN: {exc}", err=True)
+            sys.exit(3)
         if as_json:
             click.echo(result.model_dump_json(indent=2))
             if result.refused:
@@ -567,24 +604,29 @@ def ask(
 
     final_result = None
     started = False
-    for ev in gen.ask_stream(
-        query=query, user=user,
-        retrieval_config=rcfg, generation_config=gcfg,
-    ):
-        if ev.kind == "start":
-            assert ev.result is not None
-            _render_ask_header(ev.result, user)
-            started = True
-        elif ev.kind == "token":
-            click.echo(ev.text, nl=False)
-        elif ev.kind == "refused":
-            if not started and ev.result is not None:
+    try:
+        for ev in gen.ask_stream(
+            query=query, user=user,
+            retrieval_config=rcfg, generation_config=gcfg,
+            session_id=effective_session_id,
+        ):
+            if ev.kind == "start":
+                assert ev.result is not None
                 _render_ask_header(ev.result, user)
-            click.echo(ev.text)
-            final_result = ev.result
-        elif ev.kind == "done":
-            final_result = ev.result
-            click.echo("")
+                started = True
+            elif ev.kind == "token":
+                click.echo(ev.text, nl=False)
+            elif ev.kind == "refused":
+                if not started and ev.result is not None:
+                    _render_ask_header(ev.result, user)
+                click.echo(ev.text)
+                final_result = ev.result
+            elif ev.kind == "done":
+                final_result = ev.result
+                click.echo("")
+    except SessionOwnershipError as exc:
+        click.echo(f"FORBIDDEN: {exc}", err=True)
+        sys.exit(3)
 
     click.echo("")
     if final_result is not None:
@@ -600,6 +642,8 @@ def _render_ask_header(result, user) -> None:
         f"user:  {user.user_id} (tenant={user.tenant_id or '∅'} "
         f"dept={user.department or '∅'} role={user.role})"
     )
+    if result.session_id:
+        click.echo(f"session: {result.session_id}")
     if result.retrieval is not None:
         r = result.retrieval
         click.echo(
@@ -607,6 +651,10 @@ def _render_ask_header(result, user) -> None:
             f"hits={len(r.hits)} fused={r.fused_candidates} "
             f"rerank={'on' if r.rerank_applied else 'off'}"
         )
+        if r.resolved_query and r.resolved_query != r.query:
+            click.echo(f"resolved: {r.resolved_query!r}")
+        if r.stepback_query:
+            click.echo(f"stepback: {r.stepback_query!r}")
     click.echo(
         f"generation: lane={result.lane or '-'} "
         f"context_tokens={result.context_tokens} "
@@ -687,11 +735,124 @@ def health() -> None:
         click.echo(f"BM25  FAIL: {exc}", err=True)
         bm25_ok = False
 
+    redis_ok = False
+    try:
+        from kb.sessions import RedisSessionStore
+        redis_ok = RedisSessionStore().ping()
+    except Exception as exc:  # noqa: BLE001
+        click.echo(f"redis  FAIL: {exc}", err=True)
+
     click.echo(f"postgres : {'OK' if pg_ok else 'FAIL'}")
     click.echo(f"qdrant   : {'OK' if qd_ok else 'FAIL'}")
     click.echo(f"bm25 dir : {'OK' if bm25_ok else 'FAIL'}")
-    if not (pg_ok and qd_ok and bm25_ok):
+    click.echo(f"redis    : {'OK' if redis_ok else 'FAIL'}")
+    if not (pg_ok and qd_ok and bm25_ok and redis_ok):
         sys.exit(1)
+
+
+# --------------------------------------------------------------------------- #
+# sessions (Phase 3 · Slice 2B)
+# --------------------------------------------------------------------------- #
+
+@cli.group("sessions")
+def sessions_group() -> None:
+    """Manage Redis-backed conversation sessions."""
+
+
+@sessions_group.command("list")
+@click.option("--limit", type=int, default=50, show_default=True)
+def sessions_list(limit: int) -> None:
+    """List active session IDs (admin / debug only)."""
+    from kb.sessions import RedisSessionStore
+    try:
+        store = RedisSessionStore()
+        ids = store.list_keys(limit=limit)
+    except Exception as exc:  # noqa: BLE001
+        click.echo(f"FAIL: {exc}", err=True)
+        sys.exit(1)
+    if not ids:
+        click.echo("(no active sessions)")
+        return
+    for sid in ids:
+        click.echo(sid)
+
+
+@sessions_group.command("show")
+@click.option("--session-id", required=True)
+@click.option(
+    "--as-user", "as_user", default="anonymous", show_default=True,
+    help="user_id that owns the session (ownership check).",
+)
+def sessions_show(session_id: str, as_user: str) -> None:
+    """Pretty-print a session's metadata + turns."""
+    from kb.retrieval.acl import load_user
+    from kb.sessions import (
+        SessionManager, SessionNotFoundError, SessionOwnershipError,
+    )
+    try:
+        user = load_user(as_user)
+    except (FileNotFoundError, KeyError):
+        from kb.retrieval import UserContext
+        user = UserContext(user_id=as_user or "anonymous")
+    mgr = SessionManager()
+    try:
+        session = mgr.get(session_id=session_id, user_id=user.user_id)
+    except SessionNotFoundError:
+        click.echo(f"NOT FOUND: {session_id}", err=True)
+        sys.exit(1)
+    except SessionOwnershipError as exc:
+        click.echo(f"FORBIDDEN: {exc}", err=True)
+        sys.exit(3)
+
+    click.echo(f"session_id : {session.session_id}")
+    click.echo(f"user_id    : {session.user_id}")
+    click.echo(f"created_at : {session.created_at}")
+    click.echo(f"last_used  : {session.last_used_at}")
+    click.echo(f"turns      : {len(session.turns)}")
+    for i, t in enumerate(session.turns, 1):
+        click.echo("─" * 60)
+        click.echo(f"turn {i} @ {t.created_at}")
+        click.echo(f"  Q: {t.question}")
+        if t.resolved_question and t.resolved_question != t.question:
+            click.echo(f"  → {t.resolved_question}")
+        if t.refused:
+            click.echo(f"  REFUSED ({t.refusal_reason})")
+        a = (t.answer or "").replace("\n", " ").strip()
+        if len(a) > 200:
+            a = a[:200] + "…"
+        click.echo(f"  A: {a}")
+        if t.cited_parent_ids:
+            click.echo(f"  cited: {', '.join(t.cited_parent_ids[:5])}")
+        click.echo(f"  confidence: {t.confidence:.2f}")
+
+
+@sessions_group.command("delete")
+@click.option("--session-id", required=True)
+@click.option(
+    "--as-user", "as_user", default="anonymous", show_default=True,
+    help="user_id that owns the session (ownership check).",
+)
+def sessions_delete(session_id: str, as_user: str) -> None:
+    """Delete a session."""
+    from kb.retrieval.acl import load_user
+    from kb.sessions import (
+        SessionManager, SessionNotFoundError, SessionOwnershipError,
+    )
+    try:
+        user = load_user(as_user)
+    except (FileNotFoundError, KeyError):
+        from kb.retrieval import UserContext
+        user = UserContext(user_id=as_user or "anonymous")
+    mgr = SessionManager()
+    try:
+        deleted = mgr.delete(session_id=session_id, user_id=user.user_id)
+    except SessionNotFoundError:
+        click.echo("not found")
+        return
+    except SessionOwnershipError as exc:
+        click.echo(f"FORBIDDEN: {exc}", err=True)
+        sys.exit(3)
+    click.echo("deleted" if deleted else "not found")
 
 
 def main() -> None:

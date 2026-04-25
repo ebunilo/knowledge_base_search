@@ -114,6 +114,13 @@ class Retriever:
         rewrite = self._run_rewrite(query, config)
         rewrite_ms = int((time.monotonic() - t0) * 1000)
 
+        # The "canonical" query is the coref-resolved form when there
+        # was a conversation history, otherwise the raw user query.
+        # Sparse retrieval and the cross-encoder rerank both anchor on
+        # the canonical text so pronouns in the raw query don't poison
+        # BM25 / rerank pair scoring.
+        canonical_query = rewrite.canonical or query
+
         # ------------------------------------------------------------ 2. embed
         # One batch for every dense query variant.
         dense_texts = list(rewrite.query_variants)
@@ -127,7 +134,7 @@ class Retriever:
         # ------------------------------------------------------------ 3. retrieve (parallel)
         dense_pool, sparse_hits, dense_ms, sparse_ms = self._parallel_retrieve(
             query_vectors=query_vectors,
-            query=query,
+            query=canonical_query,
             collections=collections,
             user=user,
             config=config,
@@ -166,7 +173,7 @@ class Retriever:
             )
             try:
                 rerank_pool = self._apply_rerank(
-                    query=query,
+                    query=canonical_query,
                     candidates=rerank_pool,
                     children=children_cache,
                 )
@@ -196,6 +203,8 @@ class Retriever:
             hyde_passage=(rewrite.hyde_passage or None),
             rewrite_strategy=config.rewrite_strategy,
             rewrite_fallback=(rewrite.fallback_reason or None),
+            resolved_query=(rewrite.resolved or None),
+            stepback_query=(rewrite.stepback or None),
             rerank_applied=rerank_applied,
             rerank_fallback=rerank_fallback,
             collections_searched=collections,
@@ -219,12 +228,24 @@ class Retriever:
     # ================================================================== #
 
     def _run_rewrite(self, query: str, config: RetrievalConfig) -> RewriteResult:
-        if config.rewrite_strategy == "off":
+        # Skip the LLM only when nothing will be produced. Coref
+        # resolution and stepback both require a call even with
+        # rewrite_strategy="off", so we check all three signals.
+        history = list(config.conversation_history or [])
+        if (
+            config.rewrite_strategy == "off"
+            and not history
+            and not config.stepback
+        ):
             return RewriteResult(strategy="off", original=query)
         if self._rewriter is None:
             self._rewriter = QueryRewriter(settings=self.settings)
         return self._rewriter.rewrite(
-            query, strategy=config.rewrite_strategy, k=config.multi_query_k,
+            query,
+            strategy=config.rewrite_strategy,
+            k=config.multi_query_k,
+            history=history,
+            stepback=config.stepback,
         )
 
     # ================================================================== #

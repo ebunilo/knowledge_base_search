@@ -92,12 +92,24 @@ class RetrievalConfig(BaseModel):
     # None = no restriction.
     source_allowlist: Optional[list[str]] = None
 
-    # ------------- Query rewriting (Slice 2) ------------- #
+    # ------------- Query rewriting (Slice 2 + 2B) ------------- #
     # "off" keeps behaviour identical to Slice 1. "multi_query" generates
     # paraphrases; "hyde" generates a hypothetical answer passage; "both"
     # generates both in one LLM call.
     rewrite_strategy: Literal["off", "multi_query", "hyde", "both"] = "off"
     multi_query_k: int = 2
+
+    # When non-empty, the rewriter will coref-resolve the current query
+    # against this history before any other expansion. Each entry is a
+    # `(question, answer)` tuple. The Generator populates this from the
+    # session store; callers using the Retriever directly can pass it
+    # explicitly.
+    conversation_history: list[tuple[str, str]] = Field(default_factory=list)
+    # Add a step-back (broader) variant to query_variants. Cheap when
+    # combined with rewrite_strategy != "off" (one extra JSON field in
+    # the same LLM call). When strategy="off" + stepback=True we still
+    # make one LLM call. Off by default — Slice 2C will calibrate.
+    stepback: bool = False
 
     # ------------- Cross-encoder reranking (Slice 2) ------------- #
     rerank: bool = True
@@ -180,6 +192,11 @@ class RetrievalResult(BaseModel):
     hyde_passage: Optional[str] = None
     rewrite_strategy: str = "off"
     rewrite_fallback: Optional[str] = None     # set when the rewriter silently failed
+    # Canonical query actually used for sparse retrieval and as the
+    # anchor for embedding. Equals `query` unless coref-resolution
+    # rewrote a follow-up question into a self-contained one.
+    resolved_query: Optional[str] = None
+    stepback_query: Optional[str] = None
     rerank_applied: bool = False
     rerank_fallback: Optional[str] = None      # set when rerank silently failed
 
