@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Knowledge Base</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <div class="app">
+      <header class="header">
+        <div class="brand">
+          <span class="logo" aria-hidden="true">◆</span>
+          <div>
+            <h1>Acme Knowledge Base</h1>
+            <p class="tagline">Hybrid search &amp; cited answers</p>
+          </div>
+        </div>
+        <div class="header-actions">
+          <span
+            class="health-pill"
+            id="healthPill"
+            data-state="unknown"
+            title="Data plane"
+            >●</span
+          >
+          <span class="profile-badge" id="profileLabel">—</span>
+          <button type="button" class="btn ghost" id="btnTheme" aria-pressed="false" title="Toggle theme">◐</button>
+        </div>
+      </header>
+
+      <div class="layout">
+        <aside class="sidebar" aria-label="Settings">
+          <section class="side-section">
+            <h2>User</h2>
+            <label for="userSelect">Act as</label>
+            <select id="userSelect"></select>
+            <p class="hint">ACLs follow staff_directory (demo)</p>
+          </section>
+          <section class="side-section">
+            <h2>Session</h2>
+            <label for="sessionInput">Conversation ID</label>
+            <div class="row">
+              <input
+                type="text"
+                id="sessionInput"
+                placeholder="optional — for follow-up questions"
+                spellcheck="false"
+                autocomplete="off"
+              />
+            </div>
+            <div class="btn-row">
+              <button type="button" class="btn secondary" id="btnNewSession">New session</button>
+            </div>
+          </section>
+          <section class="side-section" id="sectionAdvanced">
+            <button type="button" class="disclosure" id="btnAdvanced" aria-expanded="false">
+              <span>Retrieval &amp; generation</span
+              ><span class="chev" aria-hidden="true">▾</span>
+            </button>
+            <div class="disclosure-body hidden" id="advancedBody">
+              <label for="topK">Context chunks (top‑K)</label>
+              <input type="number" id="topK" min="1" max="30" value="8" />
+              <label class="check"
+                ><input type="checkbox" id="optRerank" checked />
+                Rerank (cross‑encoder)</label
+              >
+              <label for="rewrite">Rewrite</label>
+              <select id="rewrite">
+                <option value="off" selected>Off</option>
+                <option value="multi_query">Multi-query</option>
+                <option value="hyde">HyDE</option>
+                <option value="both">Both</option>
+              </select>
+              <label class="check"
+                ><input type="checkbox" id="optStepback" />
+                Step-back variant</label
+              >
+            </div>
+          </section>
+        </aside>
+
+        <main id="main" class="main">
+          <nav class="tabs" role="tablist" aria-label="Mode">
+            <button type="button" class="tab active" data-tab="ask" id="tabAsk" role="tab" aria-selected="true">
+              Ask
+            </button>
+            <button type="button" class="tab" data-tab="search" id="tabSearch" role="tab" aria-selected="false">
+              Search
+            </button>
+          </nav>
+
+          <section
+            class="panel active"
+            id="panelAsk"
+            role="tabpanel"
+            aria-labelledby="tabAsk"
+          >
+            <div class="chat" id="chatLog" aria-live="polite" aria-atomic="false"></div>
+            <form class="compose" id="formAsk" autocomplete="off">
+              <label for="askInput" class="sr-only">Your question</label>
+              <textarea
+                id="askInput"
+                rows="2"
+                placeholder="Ask a question in natural language…"
+              ></textarea>
+              <div class="compose-bar">
+                <span class="hint" id="askStatus">Enter to send · Shift+Enter for newline</span>
+                <div class="compose-actions">
+                  <label class="check inline"
+                    ><input type="checkbox" id="optStream" checked /> Stream
+                    answer</label
+                  >
+                  <label class="check inline"
+                    ><input type="checkbox" id="optFaith" checked />
+                    NLI check</label
+                  >
+                  <button type="submit" class="btn primary" id="btnAsk">Send</button>
+                </div>
+              </div>
+            </form>
+          </section>
+
+          <section
+            class="panel"
+            id="panelSearch"
+            role="tabpanel"
+            aria-labelledby="tabSearch"
+            hidden
+          >
+            <form class="search-form" id="formSearch">
+              <label for="searchInput" class="sr-only">Search query</label>
+              <div class="search-box">
+                <input
+                  type="search"
+                  id="searchInput"
+                  placeholder="Search keywords, concepts, or phrases…"
+                />
+                <button type="submit" class="btn primary" id="btnSearch">Search</button>
+              </div>
+            </form>
+            <p class="search-meta" id="searchMeta"></p>
+            <ul class="result-list" id="searchResults" aria-label="Search results"></ul>
+          </section>
+        </main>
+      </div>
+    </div>
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>

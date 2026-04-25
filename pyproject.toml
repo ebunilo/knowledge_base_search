@@ -56,9 +56,17 @@ eval = [
     "ragas>=0.4.0",
     "datasets>=2.14.0",
 ]
+# Web UI: ``pip install -e ".[ui]"`` then ``uvicorn kb.web.app:app --host 127.0.0.1 --port 8765``
+ui = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+]
 
 [project.scripts]
 kb = "kb.cli:main"
+
+[tool.setuptools.package-data]
+kb = ["web/static/*"]
 
 [tool.setuptools.packages.find]
 include = ["kb*"]
