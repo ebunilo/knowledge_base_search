@@ -107,6 +107,8 @@ services:
     image: redis:7-alpine
     container_name: kb-redis
     restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
     ports:
       - "127.0.0.1:6379:6379"
     command: >
@@ -120,7 +122,7 @@ services:
     networks:
       - kb-net
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a $${REDIS_PASSWORD} --no-auth-warning PING | grep -q PONG"]
+      test: ["CMD-SHELL", "[ \"$(redis-cli -a \"$${REDIS_PASSWORD}\" --no-auth-warning PING)\" = \"PONG\" ]"]
       interval: 10s
       timeout: 5s
       retries: 10
