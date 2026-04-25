@@ -26,7 +26,11 @@ from kb.enrichment.llm_client import (
     StreamingCompletion,
 )
 from kb.generation.generator import Generator
-from kb.generation.types import GenerationConfig
+from kb.generation.types import (
+    FaithfulnessReport,
+    GenerationConfig,
+    SentenceCheck,
+)
 from kb.retrieval.types import RetrievalConfig, RetrievalHit, RetrievalResult, UserContext
 from kb.settings import Settings
 from kb.types import SensitivityLane
@@ -84,8 +88,9 @@ def _generator(
     completion_raises: Exception | None = None,
     stream_chunks: list[str] | None = None,
     stream_raises: Exception | None = None,
+    faithfulness_report: FaithfulnessReport | None = None,
 ) -> Generator:
-    """Build a Generator with retriever + LLM mocked."""
+    """Build a Generator with retriever + LLM (+ optional faithfulness) mocked."""
     retriever = MagicMock()
     retriever.retrieve.return_value = _retrieval(hits or [])
 
@@ -103,10 +108,18 @@ def _generator(
     elif stream_chunks is not None:
         llm.stream.return_value = _streaming(stream_chunks)
 
+    checker = MagicMock()
+    checker.check.return_value = (
+        faithfulness_report
+        if faithfulness_report is not None
+        else FaithfulnessReport()
+    )
+
     return Generator(
         settings=Settings(openai_api_key="test"),
         retriever=retriever,
         llm=llm,
+        faithfulness=checker,
     )
 
 
@@ -268,3 +281,85 @@ class TestStream:
         assert done.uncited_hits == [2]
         assert done.provider == "openai"
         assert done.model == "gpt-4o-mini"
+
+
+# --------------------------------------------------------------------------- #
+# Faithfulness integration
+# --------------------------------------------------------------------------- #
+
+class TestFaithfulnessIntegration:
+    def test_runs_when_enabled(self):
+        report = FaithfulnessReport(
+            per_sentence=[SentenceCheck(text="ok [1].", markers=[1],
+                                        cited_parent_ids=["p1"],
+                                        entailment_score=0.9, status="supported")],
+            cited_sentences=1, supported_sentences=1, supported_ratio=1.0,
+            mean_entailment=0.9, nli_calls=1,
+        )
+        gen = _generator(
+            hits=[_hit(parent_id="p1")],
+            completion_text="answer [1].",
+            faithfulness_report=report,
+        )
+        result = gen.ask("q", generation_config=GenerationConfig(check_faithfulness=True))
+
+        assert result.faithfulness is not None
+        assert result.faithfulness.supported_ratio == 1.0
+        assert result.confidence > 0.0
+        assert gen._faithfulness.check.call_count == 1
+        # Checker was called with the answer text and the used hits.
+        kwargs = gen._faithfulness.check.call_args.kwargs
+        assert kwargs["answer"] == "answer [1]."
+        assert len(kwargs["used_hits"]) == 1
+
+    def test_disabled_when_config_off(self):
+        gen = _generator(
+            hits=[_hit(parent_id="p1")],
+            completion_text="answer [1].",
+        )
+        result = gen.ask("q", generation_config=GenerationConfig(check_faithfulness=False))
+        assert result.faithfulness is None
+        assert gen._faithfulness.check.call_count == 0
+        # Confidence still computed — falls back to retrieval-only signal.
+        assert 0.0 < result.confidence <= 0.85
+
+    def test_streaming_done_carries_faithfulness(self):
+        report = FaithfulnessReport(
+            cited_sentences=1, supported_sentences=0,
+            unsupported_sentences=1, supported_ratio=0.0,
+            nli_calls=1,
+        )
+        gen = _generator(
+            hits=[_hit(parent_id="p1")],
+            stream_chunks=["unsupported claim [1]."],
+            faithfulness_report=report,
+        )
+        events = list(gen.ask_stream(
+            "q", generation_config=GenerationConfig(check_faithfulness=True),
+        ))
+        done = events[-1].result
+        assert done is not None
+        assert done.faithfulness is not None
+        assert done.faithfulness.unsupported_sentences == 1
+        # Faithfulness check ran AFTER streaming completed.
+        assert gen._faithfulness.check.call_count == 1
+
+    def test_skipped_for_refusals(self):
+        gen = _generator(hits=[])  # → refusal
+        result = gen.ask("q")
+        assert result.refused is True
+        assert result.faithfulness is None
+        assert gen._faithfulness.check.call_count == 0
+        assert result.confidence == 0.0
+
+    def test_checker_exception_is_caught(self):
+        gen = _generator(
+            hits=[_hit(parent_id="p1")],
+            completion_text="answer [1].",
+        )
+        gen._faithfulness.check.side_effect = RuntimeError("boom")
+        result = gen.ask("q", generation_config=GenerationConfig(check_faithfulness=True))
+        assert result.faithfulness is not None
+        assert result.faithfulness.fallback_reason and "RuntimeError" in result.faithfulness.fallback_reason
+        # Even with a faithfulness fallback, retrieval-only confidence applies.
+        assert 0.0 < result.confidence <= 0.85

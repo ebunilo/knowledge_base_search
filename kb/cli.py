@@ -457,6 +457,16 @@ def _fmt(x: float | None) -> str:
     help="LLM sampling temperature (default: settings).",
 )
 @click.option(
+    "--check-faithfulness/--no-check-faithfulness",
+    default=None,
+    help="Run the post-stream NLI faithfulness check (default: settings).",
+)
+@click.option(
+    "--faithfulness-threshold",
+    type=float, default=None,
+    help="Entailment probability \u2265 this counts a sentence as supported.",
+)
+@click.option(
     "--stream/--no-stream",
     default=True, show_default=True,
     help="Stream tokens to the terminal as they arrive.",
@@ -477,6 +487,8 @@ def ask(
     context_budget: int | None,
     max_tokens: int | None,
     temperature: float | None,
+    check_faithfulness: bool | None,
+    faithfulness_threshold: float | None,
     stream: bool,
     as_json: bool,
 ) -> None:
@@ -521,6 +533,16 @@ def ask(
         stream=stream and not as_json,
         include_summaries_in_context=settings.generation_include_summaries_in_context,
         min_score_threshold=settings.generation_min_score_threshold,
+        check_faithfulness=(
+            check_faithfulness
+            if check_faithfulness is not None
+            else settings.generation_check_faithfulness
+        ),
+        faithfulness_threshold=(
+            faithfulness_threshold
+            if faithfulness_threshold is not None
+            else settings.generation_faithfulness_threshold
+        ),
     )
 
     gen = Generator(settings=settings)
@@ -612,11 +634,38 @@ def _render_ask_footer(result) -> None:
         )
     if result.uncited_hits:
         click.echo(f"uncited context blocks: {result.uncited_hits}")
+    if result.faithfulness is not None:
+        f = result.faithfulness
+        if f.fallback_reason:
+            click.echo(f"faithfulness: SKIPPED  ({f.fallback_reason})")
+        else:
+            click.echo(
+                f"faithfulness: supported={f.supported_sentences}/"
+                f"{f.cited_sentences} (ratio={f.supported_ratio:.2f}) "
+                f"unverified={f.unverified_sentences} "
+                f"mean_entail={f.mean_entailment:.2f} "
+                f"nli_calls={f.nli_calls}"
+            )
+            for s in f.per_sentence:
+                if s.status == "unsupported":
+                    click.echo(
+                        f"  ⚠ UNSUPPORTED [{','.join(str(m) for m in s.markers)}] "
+                        f"entail={s.entailment_score:.2f}: "
+                        f"{_truncate(s.text, 110)}"
+                    )
+    click.echo(f"confidence: {result.confidence:.2f}")
     click.echo(
-        f"timing_ms: generation={result.generation_ms} total={result.total_ms} "
+        f"timing_ms: generation={result.generation_ms} "
+        f"faithfulness={result.faithfulness_ms} "
+        f"total={result.total_ms} "
         f"answer_chars={result.answer_chars} "
         f"provider={result.provider or '-'} model={result.model or '-'}"
     )
+
+
+def _truncate(text: str, n: int) -> str:
+    text = text.replace("\n", " ").strip()
+    return text if len(text) <= n else text[: n - 1] + "\u2026"
 
 
 # --------------------------------------------------------------------------- #

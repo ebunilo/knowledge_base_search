@@ -43,10 +43,13 @@ from typing import Iterator, Optional
 
 from kb.enrichment.llm_client import LLMClient, LLMClientError
 from kb.generation.citations import extract_citations
+from kb.generation.confidence import compute_confidence
 from kb.generation.context import ContextAssembler
+from kb.generation.faithfulness import FaithfulnessChecker
 from kb.generation.prompt import PromptBuilder
 from kb.generation.types import (
     AssembledContext,
+    FaithfulnessReport,
     GenerationConfig,
     GenerationResult,
     StreamEvent,
@@ -75,11 +78,17 @@ class Generator:
         retriever: Retriever | None = None,
         llm: LLMClient | None = None,
         assembler: ContextAssembler | None = None,
+        faithfulness: FaithfulnessChecker | None = None,
     ) -> None:
         self.settings = settings or get_settings()
         self.retriever = retriever or Retriever(settings=self.settings)
         self.llm = llm or LLMClient(self.settings)
         self.assembler = assembler or ContextAssembler()
+        # Lazy — verifying answers is opt-in via GenerationConfig, and
+        # the checker only touches HF when actually used. Tests inject
+        # a mock here; production goes through the default path.
+        self._faithfulness_override = faithfulness
+        self._faithfulness: FaithfulnessChecker | None = faithfulness
 
     # ------------------------------------------------------------------ #
     # Public API
@@ -124,12 +133,17 @@ class Generator:
             )
 
         gen_ms = int((time.monotonic() - t_gen) * 1000)
+        report, faithfulness_ms = self._run_faithfulness(
+            answer=completion.text, ctx=ctx,
+        )
         return self._finalize(
             ctx=ctx,
             answer=completion.text,
             provider=completion.provider,
             model=completion.model,
             generation_ms=gen_ms,
+            faithfulness=report,
+            faithfulness_ms=faithfulness_ms,
         )
 
     def ask_stream(
@@ -200,12 +214,20 @@ class Generator:
             yield StreamEvent(kind="token", text=chunk)
 
         gen_ms = int((time.monotonic() - t_gen) * 1000)
+        # Faithfulness verification runs AFTER the stream completes —
+        # the user has already seen the answer. The report rides on the
+        # `done` event so a UI can annotate the rendered answer.
+        report, faithfulness_ms = self._run_faithfulness(
+            answer=stream.text, ctx=ctx,
+        )
         result = self._finalize(
             ctx=ctx,
             answer=stream.text,
             provider=stream.provider,
             model=stream.model,
             generation_ms=gen_ms,
+            faithfulness=report,
+            faithfulness_ms=faithfulness_ms,
         )
         yield StreamEvent(kind="done", result=result)
 
@@ -293,10 +315,13 @@ class Generator:
         provider: str,
         model: str,
         generation_ms: int,
+        faithfulness: FaithfulnessReport | None = None,
+        faithfulness_ms: int = 0,
     ) -> GenerationResult:
         used_hits = self._used_hits_in_order(ctx)
         cite = extract_citations(answer, used_hits)
 
+        confidence = compute_confidence(ctx.retrieval, faithfulness)
         total_ms = int((time.monotonic() - ctx.t_total) * 1000)
         return GenerationResult(
             query=ctx.query,
@@ -313,7 +338,10 @@ class Generator:
             context_tokens=ctx.context.total_tokens,
             answer_chars=len(answer),
             used_hit_count=len(used_hits),
+            faithfulness=faithfulness,
+            confidence=confidence,
             generation_ms=generation_ms,
+            faithfulness_ms=faithfulness_ms,
             total_ms=total_ms,
         )
 
@@ -347,7 +375,53 @@ class Generator:
             temperature=s.generation_temperature,
             min_score_threshold=s.generation_min_score_threshold,
             include_summaries_in_context=s.generation_include_summaries_in_context,
+            check_faithfulness=s.generation_check_faithfulness,
+            faithfulness_threshold=s.generation_faithfulness_threshold,
         )
+
+    def _run_faithfulness(
+        self,
+        *,
+        answer: str,
+        ctx: "_AskContext",
+    ) -> tuple[FaithfulnessReport | None, int]:
+        """
+        Run the post-generation NLI check. Returns
+        ``(report_or_None, elapsed_ms)``. Only None when the check is
+        DISABLED in config; failures yield a populated report with
+        ``fallback_reason`` so the caller can audit the degrade path.
+        """
+        if not ctx.gen_config.check_faithfulness:
+            return None, 0
+        if not answer or not answer.strip():
+            return None, 0
+
+        used_hits = self._used_hits_in_order(ctx)
+        if not used_hits:
+            # Nothing to verify against. Empty report (signals neutral
+            # for confidence; not None — verification was *attempted*).
+            return FaithfulnessReport(), 0
+
+        t0 = time.monotonic()
+        try:
+            report = self._checker().check(
+                answer=answer, used_hits=used_hits, config=ctx.gen_config,
+            )
+        except Exception as exc:  # noqa: BLE001 — checker handles its own; this is belt-and-braces
+            logger.warning("faithfulness check raised: %s", exc)
+            report = FaithfulnessReport(
+                fallback_reason=f"{type(exc).__name__}: {exc}",
+            )
+        elapsed = int((time.monotonic() - t0) * 1000)
+        return report, elapsed
+
+    def _checker(self) -> FaithfulnessChecker:
+        if self._faithfulness is None:
+            self._faithfulness = (
+                self._faithfulness_override
+                or FaithfulnessChecker(self.settings)
+            )
+        return self._faithfulness
 
     @staticmethod
     def _select_lane(hits: list[RetrievalHit]) -> SensitivityLane:
