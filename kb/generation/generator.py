@@ -61,6 +61,12 @@ from kb.retrieval.types import (
     RetrievalResult,
     UserContext,
 )
+from kb.sessions import (
+    ConversationTurn,
+    Session,
+    SessionManager,
+    SessionOwnershipError,
+)
 from kb.settings import Settings, get_settings
 from kb.types import SensitivityLane
 
@@ -79,6 +85,7 @@ class Generator:
         llm: LLMClient | None = None,
         assembler: ContextAssembler | None = None,
         faithfulness: FaithfulnessChecker | None = None,
+        sessions: SessionManager | None = None,
     ) -> None:
         self.settings = settings or get_settings()
         self.retriever = retriever or Retriever(settings=self.settings)
@@ -89,6 +96,10 @@ class Generator:
         # a mock here; production goes through the default path.
         self._faithfulness_override = faithfulness
         self._faithfulness: FaithfulnessChecker | None = faithfulness
+        # Session manager is also lazy. Callers that never pass
+        # session_id never touch Redis. Tests inject a mock.
+        self._sessions_override = sessions
+        self._sessions: SessionManager | None = sessions
 
     # ------------------------------------------------------------------ #
     # Public API
@@ -100,16 +111,27 @@ class Generator:
         user: UserContext | None = None,
         retrieval_config: RetrievalConfig | None = None,
         generation_config: GenerationConfig | None = None,
+        session_id: str | None = None,
     ) -> GenerationResult:
-        """Synchronous ask. Returns the full result in one shot."""
+        """Synchronous ask. Returns the full result in one shot.
+
+        If `session_id` is supplied, the conversation is loaded from
+        Redis and the resulting turn is appended after the answer.
+        Coref-resolution against prior turns happens automatically as
+        long as `retrieval_config.rewrite_strategy` is at default
+        (``"off"``) — the rewriter still runs because history is
+        non-empty.
+        """
         ctx = self._prepare(
             query=query,
             user=user,
             retrieval_config=retrieval_config,
             generation_config=generation_config,
+            session_id=session_id,
         )
 
         if ctx.refusal is not None:
+            self._persist_turn(ctx, ctx.refusal)
             return ctx.refusal
 
         t_gen = time.monotonic()
@@ -123,7 +145,7 @@ class Generator:
             )
         except LLMClientError as exc:
             logger.warning("generation failed for q=%r: %s", query, exc)
-            return self._build_refusal(
+            refusal = self._build_refusal(
                 ctx=ctx,
                 reason="llm_unavailable",
                 answer=(
@@ -131,12 +153,14 @@ class Generator:
                     "Please try again in a moment."
                 ),
             )
+            self._persist_turn(ctx, refusal)
+            return refusal
 
         gen_ms = int((time.monotonic() - t_gen) * 1000)
         report, faithfulness_ms = self._run_faithfulness(
             answer=completion.text, ctx=ctx,
         )
-        return self._finalize(
+        result = self._finalize(
             ctx=ctx,
             answer=completion.text,
             provider=completion.provider,
@@ -145,6 +169,8 @@ class Generator:
             faithfulness=report,
             faithfulness_ms=faithfulness_ms,
         )
+        self._persist_turn(ctx, result)
+        return result
 
     def ask_stream(
         self,
@@ -152,6 +178,7 @@ class Generator:
         user: UserContext | None = None,
         retrieval_config: RetrievalConfig | None = None,
         generation_config: GenerationConfig | None = None,
+        session_id: str | None = None,
     ) -> Iterator[StreamEvent]:
         """
         Streaming ask. Yields a sequence of StreamEvents:
@@ -168,11 +195,13 @@ class Generator:
             user=user,
             retrieval_config=retrieval_config,
             generation_config=generation_config,
+            session_id=session_id,
         )
 
         if ctx.refusal is not None:
             yield StreamEvent(kind="start", result=ctx.refusal)
             yield StreamEvent(kind="refused", text=ctx.refusal.answer, result=ctx.refusal)
+            self._persist_turn(ctx, ctx.refusal)
             return
 
         # Emit a start event before we even initiate the LLM call. The
@@ -185,6 +214,7 @@ class Generator:
             lane=ctx.lane.value,
             context_tokens=ctx.context.total_tokens,
             used_hit_count=len(ctx.context.used_hit_ids),
+            session_id=(ctx.session.session_id if ctx.session else None),
         )
         yield StreamEvent(kind="start", result=partial)
 
@@ -208,6 +238,7 @@ class Generator:
                 ),
             )
             yield StreamEvent(kind="refused", text=refusal.answer, result=refusal)
+            self._persist_turn(ctx, refusal)
             return
 
         for chunk in stream:
@@ -229,6 +260,7 @@ class Generator:
             faithfulness=report,
             faithfulness_ms=faithfulness_ms,
         )
+        self._persist_turn(ctx, result)
         yield StreamEvent(kind="done", result=result)
 
     # ------------------------------------------------------------------ #
@@ -242,6 +274,7 @@ class Generator:
         user: UserContext | None,
         retrieval_config: RetrievalConfig | None,
         generation_config: GenerationConfig | None,
+        session_id: str | None = None,
     ) -> "_AskContext":
         """Run everything up to (but not including) the LLM call."""
         query = (query or "").strip()
@@ -250,6 +283,24 @@ class Generator:
         gen_config = generation_config or self._default_gen_config()
 
         t_total = time.monotonic()
+
+        # Resolve session BEFORE retrieval so the rewriter can see prior
+        # turns. A missing session ID stays None and the rest of the
+        # pipeline is identical to the stateless path.
+        session = self._resolve_session(session_id=session_id, user=user)
+        if (
+            session is not None
+            and session.turns
+            and not retrieval_config.conversation_history
+            # Caller-supplied history wins over session-derived history;
+            # this lets advanced callers swap in summarised history etc.
+        ):
+            history = [
+                (t.question, t.answer) for t in session.turns
+            ]
+            retrieval_config = retrieval_config.model_copy(
+                update={"conversation_history": history},
+            )
 
         retrieval = self.retriever.retrieve(
             query=query,
@@ -268,6 +319,7 @@ class Generator:
             system_prompt="",
             user_prompt="",
             refusal=None,
+            session=session,
         )
 
         # Refusal: no hits.
@@ -340,6 +392,7 @@ class Generator:
             used_hit_count=len(used_hits),
             faithfulness=faithfulness,
             confidence=confidence,
+            session_id=(ctx.session.session_id if ctx.session else None),
             generation_ms=generation_ms,
             faithfulness_ms=faithfulness_ms,
             total_ms=total_ms,
@@ -364,8 +417,111 @@ class Generator:
             context_tokens=ctx.context.total_tokens,
             answer_chars=len(answer),
             used_hit_count=len(ctx.context.used_hit_ids),
+            session_id=(ctx.session.session_id if ctx.session else None),
             total_ms=total_ms,
         )
+
+    # ------------------------------------------------------------------ #
+    # Sessions (Slice 2B)
+    # ------------------------------------------------------------------ #
+
+    def _resolve_session(
+        self,
+        *,
+        session_id: str | None,
+        user: UserContext,
+    ) -> Session | None:
+        """Load or create a session. None when sessions aren't in use.
+
+        We tolerate Redis failures: SessionManager already logs and
+        returns a stateless in-memory Session when the store is down.
+        """
+        if session_id is None:
+            return None
+        manager = self._session_manager()
+        if manager is None:
+            logger.warning(
+                "session_id %r supplied but no session manager available — "
+                "running stateless", session_id,
+            )
+            return None
+        try:
+            return manager.get_or_create(
+                session_id=session_id, user_id=user.user_id,
+            )
+        except SessionOwnershipError:
+            # This is a security signal — re-raise so the caller can
+            # render a clear 403-style error.
+            raise
+        except Exception as exc:  # noqa: BLE001 — defensive
+            logger.warning("session resolve failed: %s — running stateless", exc)
+            return None
+
+    def _persist_turn(
+        self,
+        ctx: "_AskContext",
+        result: GenerationResult,
+    ) -> None:
+        """Append the just-completed turn to the session, if any.
+
+        Refusals ARE persisted — that way "I don't know" becomes part
+        of the conversation history, the rewriter can see it, and the
+        next turn won't ask the same thing under different pronouns.
+
+        Failures here NEVER surface to the user. The answer was
+        produced; logging is enough.
+        """
+        if ctx.session is None:
+            return
+        manager = self._session_manager()
+        if manager is None:
+            return
+
+        # Stamp the session_id onto the result so callers can pick it
+        # up (especially useful when the Generator created one from
+        # `session_id=None`, but we don't expose that path yet).
+        result.session_id = ctx.session.session_id
+
+        retrieval = ctx.retrieval
+        resolved = (
+            retrieval.resolved_query if retrieval is not None else None
+        ) or ctx.query
+        cited_parents = [c.parent_id for c in result.citations]
+
+        turn = ConversationTurn(
+            question=ctx.query,
+            resolved_question=resolved,
+            answer=result.answer,
+            cited_parent_ids=cited_parents,
+            confidence=result.confidence,
+            refused=result.refused,
+            refusal_reason=result.refusal_reason,
+        )
+        try:
+            manager.append_turn(
+                session_id=ctx.session.session_id,
+                user_id=ctx.user.user_id,
+                turn=turn,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "failed to persist turn for session %s: %s",
+                ctx.session.session_id, exc,
+            )
+
+    def _session_manager(self) -> SessionManager | None:
+        """Lazy-init the SessionManager. Returns None on failure."""
+        if self._sessions is not None:
+            return self._sessions
+        if self._sessions_override is not None:
+            self._sessions = self._sessions_override
+            return self._sessions
+        try:
+            self._sessions = SessionManager(self.settings)
+        except Exception as exc:  # noqa: BLE001 — Redis init shouldn't break ask()
+            logger.warning("SessionManager init failed: %s", exc)
+            return None
+        return self._sessions
 
     def _default_gen_config(self) -> GenerationConfig:
         s = self.settings
@@ -457,7 +613,7 @@ class _AskContext:
     __slots__ = (
         "query", "user", "retrieval", "gen_config",
         "t_total", "lane", "context", "system_prompt",
-        "user_prompt", "refusal",
+        "user_prompt", "refusal", "session",
     )
 
     def __init__(
@@ -473,6 +629,7 @@ class _AskContext:
         system_prompt: str,
         user_prompt: str,
         refusal: Optional[GenerationResult],
+        session: Optional[Session] = None,
     ) -> None:
         self.query = query
         self.user = user
@@ -484,3 +641,4 @@ class _AskContext:
         self.system_prompt = system_prompt
         self.user_prompt = user_prompt
         self.refusal = refusal
+        self.session = session

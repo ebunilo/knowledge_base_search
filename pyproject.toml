@@ -50,6 +50,7 @@ dev = [
     "pytest-cov>=5",
     "ruff>=0.7",
     "mypy>=1.11",
+    "fakeredis>=2.20.0",
 ]
 
 [project.scripts]

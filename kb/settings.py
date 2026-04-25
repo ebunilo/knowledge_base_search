@@ -120,6 +120,18 @@ class Settings(BaseSettings):
     # hard refusal — just a UX signal until calibration data exists.
     generation_min_confidence: float = 0.0
 
+    # ---- Sessions (Redis) — Phase 3 · Slice 2B ---- #
+    # Rolling TTL on each session key. Every read AND write resets it,
+    # so an active conversation stays alive for `session_ttl_seconds`
+    # past the most recent activity. 1h matches typical chat UX.
+    session_ttl_seconds: int = 3600
+    # Hard cap on retained turns per session. Older turns are dropped
+    # before the rewriter sees them. Bounds Redis memory and prompt
+    # token cost; 10 covers a 5-minute conversation comfortably.
+    session_max_turns: int = 10
+    # Key prefix in Redis. Lets multiple apps share one Redis instance.
+    session_key_prefix: str = "kb:sess:"
+
     # Chunking
     parent_chunk_target_tokens: int = 1800
     child_chunk_target_tokens: int = 320

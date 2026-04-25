@@ -191,6 +191,12 @@ class GenerationResult(BaseModel):
     invalid_markers: list[int] = Field(default_factory=list)
     uncited_hits: list[int] = Field(default_factory=list)
 
+    # Session context (Phase 3 · Slice 2B). Set when the caller asked
+    # against a session_id; None otherwise. Lets clients pin a stable
+    # ID for follow-up turns (the server materialises the session if
+    # needed) or display "Continued from session X" in the UI.
+    session_id: Optional[str] = None
+
     # Post-stream NLI verification — populated when check_faithfulness is
     # on and the answer was non-empty. None when skipped (e.g. refusal,
     # lane-safe skip in prod).
