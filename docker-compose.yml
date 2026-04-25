@@ -1,8 +1,8 @@
 name: kb-search
 
 # =============================================================================
-#  Demo data plane for the Enterprise Knowledge Base Search
-#  -- Qdrant (vector DB), Postgres (doc store + metadata), Redis (session/cache)
+#  Enterprise Knowledge Base Search deployment
+#  -- App (FastAPI/uvicorn), Qdrant (vector DB), Postgres (doc store), Redis
 #  -- Optional TEI for local bulk embeddings (profile: ingestion)
 #
 #  Security posture:
@@ -12,13 +12,51 @@ name: kb-search
 #   * Credentials are read from the repo-root .env file
 #
 #  Usage:
-#     docker compose up -d --wait                 # core data plane
+#     docker compose up -d --build --wait         # app + core data plane
 #     docker compose --profile ingestion up -d    # + local TEI for bulk embeddings
 #     docker compose down                          # stop (volumes persist)
 #     docker compose down -v                       # stop and wipe all data
 # =============================================================================
 
 services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: kb-search-app:latest
+    container_name: kb-app
+    restart: unless-stopped
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      # Internal service-to-service routing inside Docker network.
+      QDRANT_URL: http://qdrant:6333
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_URL: redis://default:${REDIS_PASSWORD}@redis:6379/0
+    ports:
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-8765}:8765"
+    command: >
+      uvicorn kb.web.app:app --host 0.0.0.0 --port 8765
+    networks:
+      - kb-net
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/api/health', timeout=3).read()\" || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
   qdrant:
     image: qdrant/qdrant:v1.12.4
     container_name: kb-qdrant
