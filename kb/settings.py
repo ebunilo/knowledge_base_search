@@ -107,6 +107,19 @@ class Settings(BaseSettings):
     # itself by improving the cross-encoder framing for short answers.
     generation_include_summaries_in_context: bool = True
 
+    # ---- Faithfulness (NLI) — Phase 3 · Slice 2A ---- #
+    # When True, every answer is post-verified by running each cited
+    # sentence through an NLI model against its cited source(s). Adds
+    # ~1 HF call per cited sentence; ~200–500 ms total on a warm endpoint.
+    generation_check_faithfulness: bool = True
+    # Entailment probability (0..1) at or above which a sentence is
+    # judged SUPPORTED. Below it the sentence is UNSUPPORTED. Slice 2C
+    # calibrates against the golden set.
+    generation_faithfulness_threshold: float = 0.5
+    # Confidence (0..1) below which the CLI surfaces a warning. Not a
+    # hard refusal — just a UX signal until calibration data exists.
+    generation_min_confidence: float = 0.0
+
     # Chunking
     parent_chunk_target_tokens: int = 1800
     child_chunk_target_tokens: int = 320
