@@ -42,6 +42,10 @@ dependencies = [
 
     # Observability
     "langsmith==0.1.147",
+
+    # Web UI (``uvicorn kb.web.app:app``)
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
 ]
 
 [project.optional-dependencies]
@@ -55,11 +59,6 @@ dev = [
 eval = [
     "ragas>=0.4.0",
     "datasets>=2.14.0",
-]
-# Web UI: ``pip install -e ".[ui]"`` then ``uvicorn kb.web.app:app --host 127.0.0.1 --port 8765``
-ui = [
-    "fastapi>=0.115.0",
-    "uvicorn[standard]>=0.32.0",
 ]
 
 [project.scripts]
