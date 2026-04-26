@@ -87,6 +87,13 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_model_generator: str = "gpt-4o-mini"
 
+    # -------------------- Query guardrails (RAG / API) -------------------- #
+    # Block overly long, obviously injected, or code-dump input before
+    # rewriter/retrieval/LLM. Disable only for local experiments.
+    guardrails_enabled: bool = True
+    guardrails_max_query_chars: int = 4000
+    guardrails_max_query_lines: int = 50
+
     # -------------------- Ingestion controls -------------------- #
     bm25_backend: Literal["rank_bm25", "opensearch"] = "rank_bm25"
     ingestion_enrich_limit: int = 500

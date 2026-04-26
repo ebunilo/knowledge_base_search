@@ -28,6 +28,14 @@
     return { user_id: v === "anonymous" ? "anonymous" : v };
   }
 
+  function guardMessageFromError(err) {
+    if (err == null) return "Unknown error";
+    if (typeof err.detail === "object" && err.detail !== null && err.detail.message) {
+      return err.detail.message;
+    }
+    return err.detail || err.error || err.message || String(err);
+  }
+
   function getCommonReq() {
     return {
       user: collectUserPayload(),
@@ -195,9 +203,8 @@
       })
       .catch((err) => {
         meta.textContent = "";
-        ul.innerHTML = `<li><div class="err-box">Search failed: ${
-          err.detail || err.error || err.message || String(err)
-        }</div></li>`;
+        const msg = guardMessageFromError(err);
+        ul.innerHTML = `<li><div class="err-box">Search failed: ${msg}</div></li>`;
       });
   }
 
@@ -301,12 +308,16 @@
         return;
       }
       if (j.kind === "refused" && j.result) {
-        body.textContent = j.result.answer || "";
-        a.querySelector(".label").textContent = "Refused";
-        const div = document.createElement("div");
-        div.className = "meta";
-        div.textContent = j.result.refusal_reason || "";
-        a.appendChild(div);
+        const res = j.result;
+        body.textContent = res.answer || "";
+        const g = (res.refusal_reason || "").indexOf("query_guard:") === 0;
+        a.querySelector(".label").textContent = g ? "Input not accepted" : "Refused";
+        if (!g) {
+          const div = document.createElement("div");
+          div.className = "meta";
+          div.textContent = res.refusal_reason || "";
+          a.appendChild(div);
+        }
         return;
       }
       if (j.kind === "done" && j.result) {
@@ -318,10 +329,15 @@
         }
         const m = a.querySelector(".meta");
         if (m) m.remove();
-        const div = document.createElement("div");
-        div.className = "meta";
-        div.appendChild(formatDoneMetaNode(res));
-        a.appendChild(div);
+        const g = res.refused && (res.refusal_reason || "").indexOf("query_guard:") === 0;
+        if (!g) {
+          const div = document.createElement("div");
+          div.className = "meta";
+          div.appendChild(formatDoneMetaNode(res));
+          a.appendChild(div);
+        } else {
+          a.querySelector(".label").textContent = "Input not accepted";
+        }
       }
     };
 
@@ -408,18 +424,25 @@
         });
       })
       .then((res) => {
+        if (res.refused) {
+          a.querySelector(".label").textContent = "Notice";
+        }
         body.textContent = res.answer || (res.refused ? res.refusal_reason : "");
         if (res.session_id) {
           $("sessionInput").value = res.session_id;
         }
-        const m = document.createElement("div");
-        m.className = "meta";
-        m.innerHTML = formatDoneResult(res);
-        a.appendChild(m);
+        if (res.refused && (res.refusal_reason || "").indexOf("query_guard:") === 0) {
+          a.querySelector(".label").textContent = "Input not accepted";
+        } else {
+          const m = document.createElement("div");
+          m.className = "meta";
+          m.innerHTML = formatDoneResult(res);
+          a.appendChild(m);
+        }
         log.scrollTop = log.scrollHeight;
       })
       .catch((err) => {
-        body.textContent = "Error: " + (err.detail || err.error || err.message);
+        body.textContent = "Error: " + guardMessageFromError(err);
       });
   }
 

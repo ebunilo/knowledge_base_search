@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from kb.generation.types import GenerationConfig
+from kb.guardrails import QueryGuardError
 from kb.web.deps import get_generator, get_retriever, get_settings_cached
 from kb.web.models import AskRequest, ConfigResponse, HealthResponse, SearchRequest
 from kb.web.users_config import build_user, load_user_options
@@ -87,9 +88,19 @@ def create_app() -> FastAPI:
             multi_query_k=req.multi_query_k,
             include_parent_content=req.include_parent_content,
         )
-        r = get_retriever().retrieve(
-            (req.query or "").strip(), user=user, config=rcfg,
-        )
+        try:
+            r = get_retriever().retrieve(
+                (req.query or "").strip(), user=user, config=rcfg,
+            )
+        except QueryGuardError as e:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "query_guard",
+                    "reason": e.result.reason,
+                    "message": e.result.user_message,
+                },
+            ) from e
         return JSONResponse(content=json.loads(r.model_dump_json()))
 
     @app.post("/api/ask")

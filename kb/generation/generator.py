@@ -42,6 +42,7 @@ import time
 from typing import Iterator, Optional
 
 from kb.enrichment.llm_client import LLMClient, LLMClientError
+from kb.guardrails import QueryGuardError
 from kb.generation.citations import extract_citations
 from kb.generation.confidence import compute_confidence
 from kb.generation.context import ContextAssembler
@@ -302,11 +303,33 @@ class Generator:
                 update={"conversation_history": history},
             )
 
-        retrieval = self.retriever.retrieve(
-            query=query,
-            user=user,
-            config=retrieval_config,
-        )
+        try:
+            retrieval = self.retriever.retrieve(
+                query=query,
+                user=user,
+                config=retrieval_config,
+            )
+        except QueryGuardError as err:
+            empty = self._retrieval_result_empty(query, user)
+            ctx = _AskContext(
+                query=query,
+                user=user,
+                retrieval=empty,
+                gen_config=gen_config,
+                t_total=t_total,
+                lane=SensitivityLane.HOSTED_OK,
+                context=AssembledContext(text="", total_tokens=0),
+                system_prompt="",
+                user_prompt="",
+                refusal=None,
+                session=session,
+            )
+            ctx.refusal = self._build_refusal(
+                ctx=ctx,
+                reason=f"query_guard:{err.result.reason}",
+                answer=err.result.user_message,
+            )
+            return ctx
 
         ctx = _AskContext(
             query=query,
@@ -419,6 +442,16 @@ class Generator:
             used_hit_count=len(ctx.context.used_hit_ids),
             session_id=(ctx.session.session_id if ctx.session else None),
             total_ms=total_ms,
+        )
+
+    @staticmethod
+    def _retrieval_result_empty(query: str, user: UserContext) -> RetrievalResult:
+        return RetrievalResult(
+            query=query,
+            user_id=user.user_id,
+            hits=[],
+            query_variants=[query] if query else [],
+            collections_searched=[],
         )
 
     # ------------------------------------------------------------------ #

@@ -36,6 +36,7 @@ from kb.retrieval.dense import DenseRawHit, DenseRetriever
 from kb.retrieval.fusion import FusedHit, rrf_fuse
 from kb.retrieval.parent_store import ChildRecord, ParentStore
 from kb.retrieval.rerank import CrossEncoderReranker, RerankerError
+from kb.guardrails import run_guard_or_raise
 from kb.retrieval.rewrite import QueryRewriter, RewriteResult
 from kb.retrieval.sparse import SparseRawHit, SparseRetriever
 from kb.retrieval.types import (
@@ -108,6 +109,8 @@ class Retriever:
 
         if not query:
             return _empty_result(query, user, collections)
+
+        run_guard_or_raise(query, self.settings)
 
         # ------------------------------------------------------------ 1. rewrite
         t0 = time.monotonic()

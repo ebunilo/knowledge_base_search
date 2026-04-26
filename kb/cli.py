@@ -334,7 +334,14 @@ def search(
         include_parent_content=not no_parent,
     )
 
-    result = Retriever().retrieve(query=query, user=user, config=cfg)
+    from kb.guardrails import QueryGuardError
+
+    try:
+        result = Retriever().retrieve(query=query, user=user, config=cfg)
+    except QueryGuardError as e:
+        click.echo("", err=True)
+        click.echo(f"Input not accepted: {e.result.user_message}", err=True)
+        raise SystemExit(2) from e
 
     if as_json:
         click.echo(result.model_dump_json(indent=2))
