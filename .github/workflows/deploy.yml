@@ -1,32 +1,21 @@
 # =============================================================================
 # Deploy to a Linux cloud host over SSH, then: docker compose up -d --build
 #
-# Prerequisites on the server (as {{ SSH_USER }})
-#   * Docker Engine + docker compose v2; user in `docker` group (or use root
-#     user for deploy only — not recommended)
-#   * A directory at DEPLOY_PATH (default: /home/{{ SSH_USER }}/kb) writable
-#   * The *public* half of the deploy key in ~/.ssh/authorized_keys
-#
-# This workflow uses the *private* key from GitHub Secrets to authenticate.
-# The "public key" the operator adds to the server must match that key.
+# Prerequisites (SSH user in secrets.SSH_USER)
+#   * Docker + docker compose v2; that user in the `docker` group
+#   * A writable app directory — default is **$HOME/kb** on the server
+#   * The public key half of the deploy key in that user's ~/.ssh/authorized_keys
 #
 # ------------------------------------------------------------------------------
-# GITHUB REPOSITORY SECRETS (Settings → Secrets and variables → Actions)
+# GITHUB REPOSITORY SECRETS
 # ------------------------------------------------------------------------------
-# Required:
-#   SERVER_HOST          - Server IPv4/IPv6 or DNS name
-#   SSH_USER             - Login user (e.g. devops). App path: /home/<SSH_USER>/kb by default
-#   SSH_PRIVATE_KEY      - Full PEM/OpenSSH *private* key (-----BEGIN ... PRIVATE KEY-----)
-#                          Pairs with the *public* key in authorized_keys on the host
-# Optional (recommended in production):
-#   KNOWN_HOSTS          - One or more `ssh-keyscan` lines for SERVER_HOST:SSH_PORT
-#                        Stops MITM on first connect; if unset, the job runs
-#                        ssh-keyscan (weaker, but often acceptable for first runs)
-#   SSH_PORT             - SSH port (default: 22)
-#   DEPLOY_PATH          - Absolute app root on the server; default: /home/<SSH_USER>/kb
-# ------------------------------------------------------------------------------
-# NOT stored in GitHub: app secrets in .env on the server (never committed).
-# The rsync step excludes .env so a server-local file is not overwritten.
+# Required: SERVER_HOST, SSH_USER, SSH_PRIVATE_KEY
+# Optional:  KNOWN_HOSTS, SSH_PORT (default 22)
+#   DEPLOY_PATH — Absolute path on the server, e.g. /home/devops/kb. If **unset**,
+#     the job uses $(ssh 'printf %s $HOME')/kb so the path always matches the
+#     *actual* home of the login user (avoids "Permission denied" when $HOME
+#     is not /home/<name> or DEPLOY_PATH was a mistaken placeholder).
+# NOT in GitHub: .env (stays on the host; rsync excludes it)
 # =============================================================================
 
 name: Deploy to cloud server
@@ -35,7 +24,6 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    # Remove or relax paths if you want every push to main to deploy
     paths:
       - "kb/**"
       - "pyproject.toml"
@@ -44,9 +32,12 @@ on:
       - ".github/workflows/deploy.yml"
 
 concurrency:
-  # Do not use secrets in `group` (not available / reliable). Serialize deploys per branch.
   group: deploy-${{ github.ref_name }}
   cancel-in-progress: true
+
+# Quieter until checkout/ssh-agent publish Node-24–native major versions
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 permissions:
   contents: read
@@ -54,14 +45,11 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    # Optional: add an `environment: name: production` (or your env) so you can
-    # require manual approval in GitHub (Settings → Environments).
     steps:
       - name: Check required secrets
-        # Do not pass SSH_PRIVATE_KEY through `env` to shell; ssh-agent will fail if it is empty.
         run: |
           if [ -z "$SERVER_HOST" ] || [ -z "$SSH_USER" ]; then
-            echo "Set repository secrets SERVER_HOST and SSH_USER (and SSH_PRIVATE_KEY for the deploy key)" >&2
+            echo "Set repository secrets SERVER_HOST, SSH_USER, and SSH_PRIVATE_KEY" >&2
             exit 1
           fi
         env:
@@ -93,54 +81,53 @@ jobs:
           H: ${{ secrets.SERVER_HOST }}
           PORT: ${{ secrets.SSH_PORT }}
 
-      - name: Ensure remote deploy directory exists
+      - name: Resolve remote deploy path
+        id: rpath
         run: |
           set -euo pipefail
           PORT="${PORT:-22}"
-          if [ -z "$P" ]; then P="/home/${SSH_USER}/kb"; fi
-          if [ -z "$SSH_USER" ] || [ -z "$H" ]; then echo "Missing SSH_USER or SERVER_HOST" >&2; exit 1; fi
-          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -p "$PORT" \
-            "$SSH_USER@$H" "mkdir -p \"$P\""
+          if [ -z "$H" ] || [ -z "$SSH_USER" ]; then echo "Missing H or SSH_USER" >&2; exit 1; fi
+          RSH="ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -p $PORT"
+          if [ -n "$DEPLOY_PATH" ]; then
+            RP="$DEPLOY_PATH"
+          else
+            # One SSH as the key user: use real $HOME (avoids wrong /home/<name> and "Permission denied")
+            RP=$($RSH "$SSH_USER@$H" 'printf %s "$HOME/kb"')
+          fi
+          {
+            echo "remote_path<<__KB_PATH__"
+            printf '%s\n' "$RP"
+            echo "__KB_PATH__"
+          } >> "$GITHUB_OUTPUT"
         env:
           H: ${{ secrets.SERVER_HOST }}
-          P: ${{ secrets.DEPLOY_PATH }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
           PORT: ${{ secrets.SSH_PORT }}
           SSH_USER: ${{ secrets.SSH_USER }}
 
-      - name: Rsync application to server
+      - name: Ensure directory, sync, and restart
+        env:
+          H: ${{ secrets.SERVER_HOST }}
+          PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          REMOTE_PATH: ${{ steps.rpath.outputs.remote_path }}
         run: |
           set -euo pipefail
           PORT="${PORT:-22}"
-          if [ -z "$SSH_USER" ] || [ -z "$H" ]; then echo "Missing SSH_USER or SERVER_HOST" >&2; exit 1; fi
-          if [ -z "$P" ]; then P="/home/${SSH_USER}/kb"; fi
-          DEST="${SSH_USER}@${H}:${P}/"
+          RP="${REMOTE_PATH:-}"
+          RSH="ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -p $PORT"
+          if [ -z "$SSH_USER" ] || [ -z "$H" ] || [ -z "$RP" ]; then
+            echo "Missing SSH_USER, SERVER_HOST, or resolved path" >&2
+            exit 1
+          fi
+          $RSH "$SSH_USER@$H" "mkdir -p -- \"$RP\""
           export RSYNC_RSH="ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -p $PORT"
-          # Copy repo to server. --delete: remove stale app files; .env and local secrets stay
-          # excluded from transfer and (with rsync rules) are not clobbered.
+          # rsync: "user@host:/abs/path/"
           rsync -avz --delete --checksum \
             --filter='P .env' --filter='P .env.*' --filter='P .venv' --filter='P venv' \
             --exclude='.git/' \
             --exclude='.env' --exclude='.env.*' \
             --exclude='.pytest_cache' --exclude='.ruff_cache' --exclude='.mypy_cache' --exclude='__pycache__' \
             --exclude='.cursor' --exclude='*.pyc' \
-            ./ "$DEST"
-        env:
-          H: ${{ secrets.SERVER_HOST }}
-          P: ${{ secrets.DEPLOY_PATH }}
-          PORT: ${{ secrets.SSH_PORT }}
-          SSH_USER: ${{ secrets.SSH_USER }}
-
-      - name: Rebuild and restart stack
-        run: |
-          set -euo pipefail
-          PORT="${PORT:-22}"
-          if [ -z "$P" ]; then P="/home/${SSH_USER}/kb"; fi
-          if [ -z "$SSH_USER" ] || [ -z "$H" ]; then echo "Missing SSH_USER or SERVER_HOST" >&2; exit 1; fi
-          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -p "$PORT" \
-            "$SSH_USER@$H" \
-            "set -euo pipefail; cd \"$P\" && docker compose up -d --build --wait"
-        env:
-          H: ${{ secrets.SERVER_HOST }}
-          P: ${{ secrets.DEPLOY_PATH }}
-          PORT: ${{ secrets.SSH_PORT }}
-          SSH_USER: ${{ secrets.SSH_USER }}
+            ./ "$SSH_USER@$H:$RP/"
+          $RSH "$SSH_USER@$H" "set -euo pipefail; cd -- \"$RP\" && docker compose up -d --build --wait"
