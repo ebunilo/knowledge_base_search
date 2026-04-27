@@ -92,13 +92,13 @@
 ## Images
 
 ### Sample Response showing citations
-[!Sample Q&A showing citations and confidence score](documentation/images/sample_inference.png)
+![Sample Q&A showing citations and confidence score](documentation/images/sample_inference.png)
 
 ### Monitoring using LangSmith
-[!Monitoring using LangSmith](documentation/images/tracing_langsmith.png)
+![Monitoring using LangSmith](documentation/images/tracing_langsmith.png)
 
 ### Deployment Automation using GitAction
-[!Automated Deployment with GitAction](documentation/images/gitaction.png)
+![Automated Deployment with GitAction](documentation/images/gitaction.png)
 
 
 ## License
