@@ -8,28 +8,30 @@ It maps each runtime model to one of the two LLM lanes from the design (`hosted_
 
 Three profiles are supported. The application code is identical — only env vars and endpoint configs change.
 
-- **`demo`** (default for this project, data may leave the network): all inference via hosted/serverless APIs, no dedicated GPU endpoints, databases local in Docker. Target: **~$35–$140/month**.
-- **`demo-isolated`**: same as `demo` but enforces the self-hosted lane with a scale-to-zero HF endpoint. Use when demo data must not leave the network. Target: ~$55–$180/month.
-- **`prod`**: always-on generator, managed databases, OpenSearch for BM25, multi-region. Target: ~$2.2k–$4.1k/month.
+- `**demo`** (default for this project, data may leave the network): all inference via hosted/serverless APIs, no dedicated GPU endpoints, databases local in Docker. Target: **~$35–$140/month**.
+- `**demo-isolated`**: same as `demo` but enforces the self-hosted lane with a scale-to-zero HF endpoint. Use when demo data must not leave the network. Target: ~$55–$180/month.
+- `**prod**`: always-on generator, managed databases, OpenSearch for BM25, multi-region. Target: ~$2.2k–$4.1k/month.
 
-Sections §2 and §5 below cover the **`prod`** profile. The **`demo-isolated`** profile is in §7. The **`demo`** profile is in §8, and is what you should provision now.
+Sections §2 and §5 below cover the `**prod**` profile. The `**demo-isolated**` profile is in §7. The `**demo**` profile is in §8, and is what you should provision now.
 
 ---
 
 ## 1. Model Inventory by Pipeline Role
 
-| Role | Model | Where it runs | Lane | Why |
-|---|---|---|---|---|
-| **Embeddings (dense + sparse)** | `BAAI/bge-m3` | HF Inference Endpoint (dedicated, GPU small) | both lanes | Single model produces dense + sparse vectors; multilingual-ready. |
-| **Cross-encoder reranker** | `BAAI/bge-reranker-v2-m3` | HF Inference Endpoint (dedicated, GPU small) | both lanes | Strong, open, lightweight. |
-| **NLI citation verifier** | `MoritzLaurer/deberta-v3-large-mnli-fever-anli-ling-wanli` | HF Serverless Inference API | both lanes | Sentence-level entailment for post-stream citation check. |
-| **PII / sensitivity classifier (lightweight)** | `microsoft/Presidio` (CPU) + `dslim/bert-base-NER` | Self-hosted CPU service (or HF Inference API for NER) | both lanes | Runs at ingestion, never sees user queries. |
-| **Intent classifier** | `Qwen2.5-1.5B-Instruct` | Qwen API (preferred) or HF Inference API | both lanes | Tiny, fast; no sensitive content involved. |
-| **Indexing-time enrichment** (hypothetical questions, summaries) | `Qwen2.5-7B-Instruct` | Qwen API (cheap, batched) | both lanes | Runs offline; chunks already classified — sensitive ones use a self-hosted endpoint instead. |
-| **Indexing enrichment for sensitive chunks** | `Qwen2.5-7B-Instruct` | HF dedicated Inference Endpoint (GPU medium) | self_hosted_only | Sensitive content never leaves our HF endpoint. |
-| **HyDE / query rewriting** | `Qwen2.5-7B-Instruct` | Qwen API (hosted lane), HF dedicated (self-hosted lane) | both lanes (lane-aware) | Mid-tier reasoning, on the warm path. |
-| **Generator (hosted lane)** | Primary `gpt-4o-mini` (OpenAI), fallback `claude-3-5-haiku` (if added later), final fallback `Qwen2.5-32B-Instruct` via Qwen API | OpenAI / hosted | hosted_ok | Best quality/$ for public-cleared content. |
-| **Generator (self-hosted lane)** | Primary `Qwen2.5-32B-Instruct` on HF dedicated endpoint, fallback `Qwen2.5-14B-Instruct` (smaller HF endpoint) | HF dedicated | self_hosted_only | Confidential content never leaves our infra. |
+
+| Role                                                             | Model                                                                                                                            | Where it runs                                           | Lane                    | Why                                                                                          |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- | ----------------------- | -------------------------------------------------------------------------------------------- |
+| **Embeddings (dense + sparse)**                                  | `BAAI/bge-m3`                                                                                                                    | HF Inference Endpoint (dedicated, GPU small)            | both lanes              | Single model produces dense + sparse vectors; multilingual-ready.                            |
+| **Cross-encoder reranker**                                       | `BAAI/bge-reranker-v2-m3`                                                                                                        | HF Inference Endpoint (dedicated, GPU small)            | both lanes              | Strong, open, lightweight.                                                                   |
+| **NLI citation verifier**                                        | `MoritzLaurer/deberta-v3-large-mnli-fever-anli-ling-wanli`                                                                       | HF Serverless Inference API                             | both lanes              | Sentence-level entailment for post-stream citation check.                                    |
+| **PII / sensitivity classifier (lightweight)**                   | `microsoft/Presidio` (CPU) + `dslim/bert-base-NER`                                                                               | Self-hosted CPU service (or HF Inference API for NER)   | both lanes              | Runs at ingestion, never sees user queries.                                                  |
+| **Intent classifier**                                            | `Qwen2.5-1.5B-Instruct`                                                                                                          | Qwen API (preferred) or HF Inference API                | both lanes              | Tiny, fast; no sensitive content involved.                                                   |
+| **Indexing-time enrichment** (hypothetical questions, summaries) | `Qwen2.5-7B-Instruct`                                                                                                            | Qwen API (cheap, batched)                               | both lanes              | Runs offline; chunks already classified — sensitive ones use a self-hosted endpoint instead. |
+| **Indexing enrichment for sensitive chunks**                     | `Qwen2.5-7B-Instruct`                                                                                                            | HF dedicated Inference Endpoint (GPU medium)            | self_hosted_only        | Sensitive content never leaves our HF endpoint.                                              |
+| **HyDE / query rewriting**                                       | `Qwen2.5-7B-Instruct`                                                                                                            | Qwen API (hosted lane), HF dedicated (self-hosted lane) | both lanes (lane-aware) | Mid-tier reasoning, on the warm path.                                                        |
+| **Generator (hosted lane)**                                      | Primary `gpt-4o-mini` (OpenAI), fallback `claude-3-5-haiku` (if added later), final fallback `Qwen2.5-32B-Instruct` via Qwen API | OpenAI / hosted                                         | hosted_ok               | Best quality/$ for public-cleared content.                                                   |
+| **Generator (self-hosted lane)**                                 | Primary `Qwen2.5-32B-Instruct` on HF dedicated endpoint, fallback `Qwen2.5-14B-Instruct` (smaller HF endpoint)                   | HF dedicated                                            | self_hosted_only        | Confidential content never leaves our infra.                                                 |
+
 
 ---
 
@@ -38,6 +40,7 @@ Sections §2 and §5 below cover the **`prod`** profile. The **`demo-isolated`**
 You will provision **three Inference Endpoints** plus rely on the **Serverless Inference API** for everything else. Costs scale with GPU type and uptime; start small, scale on metrics.
 
 ### 2.1 Embeddings endpoint (`bge-m3`)
+
 ```
 Name:           kb-embed-bge-m3
 Model:          BAAI/bge-m3
@@ -51,6 +54,7 @@ Container:      Default TEI (Text Embeddings Inference)
 ```
 
 ### 2.2 Reranker endpoint (`bge-reranker-v2-m3`)
+
 ```
 Name:           kb-rerank-bge-v2-m3
 Model:          BAAI/bge-reranker-v2-m3
@@ -63,6 +67,7 @@ Max replicas:   2
 ```
 
 ### 2.3 Self-hosted-lane generator (`Qwen2.5-32B-Instruct`)
+
 ```
 Name:           kb-llm-qwen25-32b
 Model:          Qwen/Qwen2.5-32B-Instruct
@@ -79,7 +84,9 @@ Max total tokens:  10240
 ```
 
 ### 2.4 Serverless Inference API (no provisioning, pay-per-call)
+
 Use for:
+
 - `MoritzLaurer/deberta-v3-large-mnli-...` (NLI verification)
 - `dslim/bert-base-NER` (PII augmentation if Presidio is insufficient)
 - Optional fallback for `bge-m3` if dedicated endpoint is down
@@ -143,51 +150,13 @@ APP_PRIVATE_COLLECTION=tenant_acme_staff_private_v1
 
 ---
 
-## 4. What I Need You to Provision (in order)
 
-**A. Hugging Face — must do, blockers for ingestion:**
-1. Create the **embeddings endpoint** (§2.1). Paste URL into `HF_EMBED_ENDPOINT_URL`.
-2. Create the **reranker endpoint** (§2.2). Paste URL into `HF_RERANK_ENDPOINT_URL`.
-3. Confirm your HF token has `inference.endpoints.write` scope (so the app can health-check, optionally re-deploy).
-
-**B. Hugging Face — must do, blocker for self-hosted lane:**
-4. Create the **Qwen2.5-32B endpoint** (§2.3). This is the most expensive piece (~A100). If budget is a concern for now, swap to `Qwen2.5-14B-Instruct` on a single A10G — I'll note the model size change in the env file.
-
-**C. Qwen API — recommended:**
-5. Create an API key in DashScope (or your Qwen provider). Set `QWEN_API_KEY`. This drastically reduces cost for indexing-time enrichment (millions of chunk-level LLM calls).
-
-**D. OpenAI — recommended:**
-6. Confirm the OpenAI key. We'll use `gpt-4o-mini` as the primary hosted-lane generator.
-
-**E. Infra (do later, before Phase 1 ingestion):**
-7. Provision Qdrant (managed cloud is fine for v1; eu-west-1).
-8. Provision OpenSearch (or Elasticsearch).
-9. Provision Postgres + Redis (any managed offering in eu-west-1).
-10. Create a LangSmith project named `acme-kb-search`.
 
 ---
 
-## 5. Cost Sanity Check (rough order-of-magnitude, monthly)
 
-| Item | Estimate |
-|---|---|
-| HF embeddings endpoint (L4, scale-to-zero) | $80–$200 |
-| HF reranker endpoint (L4, scale-to-zero) | $60–$150 |
-| HF self-hosted Qwen 32B (A100, always-on) | $1500–$2200 |
-| HF serverless (NLI) | $20–$80 (usage-based) |
-| Qwen API (indexing enrichment burst, then trickle) | $50–$300 |
-| OpenAI gpt-4o-mini (generation, hosted lane) | $50–$400 (usage-based) |
-| Qdrant managed (small cluster) | $80–$250 |
-| OpenSearch managed (small cluster) | $150–$400 |
-| Postgres + Redis managed | $80–$200 |
-| LangSmith | free tier viable initially |
-| **Approx total** | **~$2.2k–$4.1k / month** |
 
-The **single biggest line item is the always-on 32B endpoint**. Two ways to cut it:
-- Swap to **Qwen2.5-14B** on an A10G (~$400–$600/mo) — recommended for v1.
-- Or rely on Qwen API for the self-hosted lane with strict contractual data-handling guarantees from the provider — but this contradicts the "data must not leave the network" requirement, so only valid if classifying *less* content as `self_hosted_only`.
 
-**My recommendation for v1:** start with **Qwen2.5-14B-Instruct** on the HF endpoint. We can upgrade to 32B once eval shows the smaller model is the quality bottleneck.
 
 ---
 
@@ -199,16 +168,18 @@ Goal: keep the architecture and lane routing intact, cut cost ~95%, accept cold-
 
 ### 7.1 Model routing — demo tier
 
-| Role | Where it runs (demo) | Notes |
-|---|---|---|
-| Embeddings (query-time) | **HF Serverless Inference API** (`BAAI/bge-m3`) | No dedicated endpoint. Small per-call cost. |
-| Embeddings (ingestion bulk) | **Self-hosted TEI in Docker** on your machine | One-off burst; free. `docker run ghcr.io/huggingface/text-embeddings-inference ...` |
-| Reranker | **HF Serverless Inference API** (`BAAI/bge-reranker-v2-m3`) | No dedicated endpoint. |
-| NLI citation verifier | **HF Serverless Inference API** | Same as prod. |
-| Self-hosted LLM | **HF dedicated endpoint, `Qwen2.5-14B-Instruct`, A10G, SCALE-TO-ZERO** | Cold-start ~30–90s on first call after idle. |
-| Hosted LLM | **OpenAI `gpt-4o-mini`** | Pay-per-call, cheap. |
-| Indexing enrichment | **Qwen API `qwen2.5-7b-instruct`**, capped to a sample | `INGESTION_ENRICH_LIMIT=500` until you demo the full corpus. |
-| Intent classifier | **Qwen API `qwen2.5-1.5b-instruct`** | Pay-per-call, negligible cost. |
+
+| Role                        | Where it runs (demo)                                                   | Notes                                                                               |
+| --------------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Embeddings (query-time)     | **HF Serverless Inference API** (`BAAI/bge-m3`)                        | No dedicated endpoint. Small per-call cost.                                         |
+| Embeddings (ingestion bulk) | **Self-hosted TEI in Docker** on your machine                          | One-off burst; free. `docker run ghcr.io/huggingface/text-embeddings-inference ...` |
+| Reranker                    | **HF Serverless Inference API** (`BAAI/bge-reranker-v2-m3`)            | No dedicated endpoint.                                                              |
+| NLI citation verifier       | **HF Serverless Inference API**                                        | Same as prod.                                                                       |
+| Self-hosted LLM             | **HF dedicated endpoint, `Qwen2.5-14B-Instruct`, A10G, SCALE-TO-ZERO** | Cold-start ~30–90s on first call after idle.                                        |
+| Hosted LLM                  | **OpenAI `gpt-4o-mini`**                                               | Pay-per-call, cheap.                                                                |
+| Indexing enrichment         | **Qwen API `qwen2.5-7b-instruct`**, capped to a sample                 | `INGESTION_ENRICH_LIMIT=500` until you demo the full corpus.                        |
+| Intent classifier           | **Qwen API `qwen2.5-1.5b-instruct`**                                   | Pay-per-call, negligible cost.                                                      |
+
 
 ### 7.2 Data plane — demo tier
 
@@ -263,15 +234,17 @@ WARMUP_CRON_WINDOW=                           # e.g., "0,10,20,30,40,50 9-11 * *
 
 ### 7.4 Demo-tier cost estimate
 
-| Item | Cost |
-|---|---|
-| HF 14B endpoint (A10G, scale-to-zero, ~2h warm/day on demo days) | $30–$80 |
-| HF Serverless (embed queries + rerank + NLI) | $10–$40 |
-| OpenAI `gpt-4o-mini` (light usage) | $10–$40 |
-| Qwen API (capped enrichment + intent classifier) | $5–$20 |
-| Databases (Docker on local/VM) | $0 |
-| LangSmith (free tier) | $0 |
-| **Approx total** | **~$55–$180 / month** |
+
+| Item                                                             | Cost                  |
+| ---------------------------------------------------------------- | --------------------- |
+| HF 14B endpoint (A10G, scale-to-zero, ~2h warm/day on demo days) | $30–$80               |
+| HF Serverless (embed queries + rerank + NLI)                     | $10–$40               |
+| OpenAI `gpt-4o-mini` (light usage)                               | $10–$40               |
+| Qwen API (capped enrichment + intent classifier)                 | $5–$20                |
+| Databases (Docker on local/VM)                                   | $0                    |
+| LangSmith (free tier)                                            | $0                    |
+| **Approx total**                                                 | **~$55–$180 / month** |
+
 
 ### 7.5 Warm-up strategy for demo day
 
@@ -301,16 +274,18 @@ The two-lane architecture stays in code — in this profile the self-hosted lane
 
 ### 8.1 Model routing — demo profile
 
-| Role | Where it runs |
-|---|---|
-| Embeddings (query-time) | **HF Serverless Inference API** (`BAAI/bge-m3`) |
-| Embeddings (ingestion bulk) | **Self-hosted TEI in Docker** on your machine (one-off, free) |
-| Reranker | **HF Serverless Inference API** (`BAAI/bge-reranker-v2-m3`) |
-| NLI citation verifier | **HF Serverless Inference API** |
-| Generator — hosted lane | **OpenAI `gpt-4o-mini`** |
+
+| Role                         | Where it runs                                                 |
+| ---------------------------- | ------------------------------------------------------------- |
+| Embeddings (query-time)      | **HF Serverless Inference API** (`BAAI/bge-m3`)               |
+| Embeddings (ingestion bulk)  | **Self-hosted TEI in Docker** on your machine (one-off, free) |
+| Reranker                     | **HF Serverless Inference API** (`BAAI/bge-reranker-v2-m3`)   |
+| NLI citation verifier        | **HF Serverless Inference API**                               |
+| Generator — hosted lane      | **OpenAI `gpt-4o-mini`**                                      |
 | Generator — self-hosted lane | **OpenAI `gpt-4o-mini`** (via override; Qwen API as fallback) |
-| Indexing enrichment | **Qwen API `qwen2.5-7b-instruct`**, capped sample |
-| Intent classifier | **Qwen API `qwen2.5-1.5b-instruct`** |
+| Indexing enrichment          | **Qwen API `qwen2.5-7b-instruct`**, capped sample             |
+| Intent classifier            | **Qwen API `qwen2.5-1.5b-instruct`**                          |
+
 
 ### 8.2 Data plane — demo profile
 
@@ -356,14 +331,16 @@ WARMUP_CRON_WINDOW=
 
 ### 8.4 Demo profile cost estimate
 
-| Item | Cost |
-|---|---|
-| HF Serverless (embed queries + rerank + NLI) | $10–$40 |
-| OpenAI `gpt-4o-mini` (both lanes) | $20–$80 |
-| Qwen API (capped enrichment + intent classifier) | $5–$20 |
-| Databases (Docker on local/VM) | $0 |
-| LangSmith (free tier) | $0 |
-| **Approx total** | **~$35–$140 / month** |
+
+| Item                                             | Cost                  |
+| ------------------------------------------------ | --------------------- |
+| HF Serverless (embed queries + rerank + NLI)     | $10–$40               |
+| OpenAI `gpt-4o-mini` (both lanes)                | $20–$80               |
+| Qwen API (capped enrichment + intent classifier) | $5–$20                |
+| Databases (Docker on local/VM)                   | $0                    |
+| LangSmith (free tier)                            | $0                    |
+| **Approx total**                                 | **~$35–$140 / month** |
+
 
 ### 8.5 Safety rails for the override flag
 
@@ -400,17 +377,17 @@ Once you've provisioned and shared the keys/URLs, I will run these in order befo
 5. Start docker-compose data plane (Qdrant + Postgres + Redis) and verify health endpoints.
 6. Confirm LangSmith trace appears.
 
-**`demo` profile additional:**
+`**demo` profile additional:**
 
-7. Confirm `DEMO_ALLOW_HOSTED_FOR_SELFHOSTED_LANE=true` is logged at startup.
-8. Assert the safety rail: app refuses to start when `APP_PROFILE=prod` and the override flag is true.
-9. Verify audit-log entries are tagged `lane_isolation: "demo_override"`.
+1. Confirm `DEMO_ALLOW_HOSTED_FOR_SELFHOSTED_LANE=true` is logged at startup.
+2. Assert the safety rail: app refuses to start when `APP_PROFILE=prod` and the override flag is true.
+3. Verify audit-log entries are tagged `lane_isolation: "demo_override"`.
 
-**`demo-isolated` / `prod` additional:**
+`**demo-isolated` / `prod` additional:**
 
-10. `curl` the HF dedicated endpoint with a minimal payload; measure cold-start time; record as baseline.
-11. Round-trip a 5-token completion through the HF self-hosted endpoint.
-12. Verify lane-routing logic: a request flagged `self_hosted_only` never hits OpenAI/Qwen API (routing must deny it, not just "by convention").
-13. Confirm warm-up mechanism of choice works end-to-end (demo-isolated only).
+1. `curl` the HF dedicated endpoint with a minimal payload; measure cold-start time; record as baseline.
+2. Round-trip a 5-token completion through the HF self-hosted endpoint.
+3. Verify lane-routing logic: a request flagged `self_hosted_only` never hits OpenAI/Qwen API (routing must deny it, not just "by convention").
+4. Confirm warm-up mechanism of choice works end-to-end (demo-isolated only).
 
 These checks become the first integration-test suite, gating Phase 1.
